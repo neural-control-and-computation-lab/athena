@@ -99,20 +99,21 @@ def draw_hand_landmarks_on_image(rgb_image, detection_result):
 
     return annotated_image
 
-def run_mediapipe(input_streams, save_images=False, monitor_images=False, display_width=480, display_height=320):
+def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gpu=True, display_width=450, display_height=360):
     # Load HandLandmarker and PoseLandmarker models
     hand_model_path = 'hand_landmarker.task'
     pose_model_path = 'pose_landmarker_full.task'
 
+    # Set GPU delegate based on user selection
+    delegate = mp.tasks.BaseOptions.Delegate.GPU if use_gpu else mp.tasks.BaseOptions.Delegate.CPU
+
     hand_options = HandLandmarkerOptions(
-        base_options=mp.tasks.BaseOptions(model_asset_path=hand_model_path,
-                                          delegate=mp.tasks.BaseOptions.Delegate.GPU),
+        base_options=mp.tasks.BaseOptions(model_asset_path=hand_model_path, delegate=delegate),
         running_mode=RunningMode.VIDEO,
-        num_hands = 2
+        num_hands=2
     )
     pose_options = PoseLandmarkerOptions(
-        base_options=mp.tasks.BaseOptions(model_asset_path=pose_model_path,
-                                          delegate=mp.tasks.BaseOptions.Delegate.GPU),
+        base_options=mp.tasks.BaseOptions(model_asset_path=pose_model_path, delegate=delegate),
         running_mode=RunningMode.VIDEO
     )
 
@@ -140,8 +141,11 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, displa
         # Process each frame for hand and pose landmarks
         for cam, (_, frame) in enumerate(frames):
             # Convert frame from BGR to RGB as required by Mediapipe
-            #mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv.cvtColor(frame, cv.COLOR_BGR2RGB))
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGBA, data=cv.cvtColor(frame, cv.COLOR_BGR2RGBA))
+            if use_gpu:
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGBA, data=cv.cvtColor(frame, cv.COLOR_BGR2RGBA))
+            else:
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv.cvtColor(frame, cv.COLOR_BGR2RGB))
+
             timestamp_ms = int(framenums[cam] * 1000 / fps)
 
             # Hand Landmarks detection with the camera's specific detector
@@ -200,8 +204,8 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, displa
             # display if monitoring
             if monitor_images:
                 # Set a grid layout for displaying each camera feed
-                window_x = (cam % 4) * (display_width + 10)  # Adjust for 4 columns
-                window_y = (cam // 4) * (display_height + 30)  # Adjust row position
+                window_x = (cam % 4) * (display_width + 2)  # Adjust for 4 columns
+                window_y = (cam // 4) * (display_height + 29)  # Adjust row position
 
                 cv.imshow(f'cam{cam}', resized_frame)
                 cv.moveWindow(f'cam{cam}', window_x, window_y)
@@ -236,10 +240,11 @@ def select_folder_and_options():
     Create GUI to select folder and set options for saving images/videos and monitoring.
     """
     def on_submit():
-        global save_images, save_video, monitor_images, idfolder
+        global save_images, save_video, monitor_images, use_gpu, idfolder
         save_images = var_save_images.get()
         save_video = var_save_video.get()
         monitor_images = var_monitor_images.get()
+        use_gpu = var_use_gpu.get()  # Get the state of the GPU checkbox
         if not idfolder:
             messagebox.showerror("Error", "No folder selected!")
         else:
@@ -275,6 +280,7 @@ def select_folder_and_options():
     var_save_images = tk.BooleanVar(value=False)
     var_save_video = tk.BooleanVar(value=False)
     var_monitor_images = tk.BooleanVar(value=False)
+    var_use_gpu = tk.BooleanVar(value=True)  # Default to using GPU
 
     chk_save_images = tk.Checkbutton(root, text="Save Images", variable=var_save_images)
     chk_save_images.grid(row=1, column=0, padx=10, pady=5)
@@ -285,15 +291,19 @@ def select_folder_and_options():
     chk_monitor_images = tk.Checkbutton(root, text="Monitor Images", variable=var_monitor_images)
     chk_monitor_images.grid(row=1, column=2, padx=10, pady=5)
 
+    # Add a checkbox for GPU processing
+    chk_use_gpu = tk.Checkbutton(root, text="Use GPU Processing", variable=var_use_gpu)
+    chk_use_gpu.grid(row=2, column=0, padx=10, pady=5)
+
     # Submit button
     btn_submit = tk.Button(root, text="GO", command=on_submit)
-    btn_submit.grid(row=2, column=1, padx=10, pady=20)
+    btn_submit.grid(row=3, column=1, padx=10, pady=20)
 
     root.mainloop()
 
+
 if __name__ == '__main__':
     start = time.time()
-
     select_folder_and_options()
 
     if idfolder:
@@ -307,6 +317,7 @@ if __name__ == '__main__':
         print(f"Selected Folder: {idfolder}")
         print(f"Save Images: {save_images}")
         print(f"Save Video: {save_video}")
+        print(f"Use GPU: {use_gpu}")
 
         if save_video and not save_images:
             print("Cannot save video without saving images. Adjusting settings.")
@@ -330,7 +341,7 @@ if __name__ == '__main__':
                 os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
 
         kpts_caml, kpts_camr, kpts_cambody = run_mediapipe(vidnames, save_images=save_images,
-                                                           monitor_images=monitor_images)
+                                                           monitor_images=monitor_images, use_gpu=use_gpu)
 
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_left'), kpts_caml)
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_right'), kpts_camr)
