@@ -14,27 +14,37 @@ from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.vision import HandLandmarker, PoseLandmarker, HandLandmarkerOptions, PoseLandmarkerOptions, RunningMode
 
+
 def createvideo(image_folder, extension, fs, output_folder, video_name):
     """
-    Compiling a set of images into a video.
+    Compiling a set of images into a video in sequential order.
     """
     if not os.path.exists(output_folder):
         os.mkdir(output_folder)
 
+    # Get the list of images and sort them by the frame number
     images = [img for img in os.listdir(image_folder) if img.endswith(extension)]
+
     if not images:
         print(f"No images found in {image_folder}.")
         return
 
+    # Sort the images based on their filenames (assuming they contain frame numbers)
+    images.sort(key=lambda img: int(img.split('frame')[-1].split('.')[0]))
+
+    # Read the first image to get the frame dimensions
     frame = cv.imread(os.path.join(image_folder, images[0]))
     height, width, layers = frame.shape
 
+    # Set the codec and create the video writer
     fourcc = cv.VideoWriter_fourcc(*'mp4v')
     video = cv.VideoWriter(os.path.join(output_folder, video_name), fourcc, fs, (width, height))
 
+    # Write each image to the video file
     for image in images:
         video.write(cv.imread(os.path.join(image_folder, image)))
 
+    # Release the video writer
     video.release()
     cv.destroyAllWindows()
 
@@ -98,6 +108,7 @@ def draw_hand_landmarks_on_image(rgb_image, detection_result):
                    FONT_SIZE, HANDEDNESS_TEXT_COLOR, FONT_THICKNESS, cv.LINE_AA)
 
     return annotated_image
+
 def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gpu=True, display_width=450, display_height=360):
     # Load HandLandmarker and PoseLandmarker models
     hand_model_path = 'hand_landmarker.task'
@@ -136,7 +147,7 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
     # Initialize frame number for each camera
     framenums = [0] * len(caps)
 
-    while framenums[0] < 10:
+    while True:
         frames = [cap.read() for cap in caps]
         if not all(ret for ret, _ in frames):
             break
@@ -358,7 +369,7 @@ if __name__ == '__main__':
             for cam in range(ncams):
                 imagefolder = os.path.join(outdir_images_trial, f'cam{cam}')
                 createvideo(image_folder=imagefolder, extension='.png', fs=60,
-                            output_folder=os.path.join(outdir_video_trial, trialname), video_name=f'cam{cam}.mp4')
+                            output_folder=outdir_video_trial, video_name=f'cam{cam}.mp4')
 
     end = time.time()
     print(f'Time to run code: {end - start} seconds')
