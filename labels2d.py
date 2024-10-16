@@ -140,6 +140,9 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
     kpts_cam_r = [[] for _ in caps]
     kpts_body = [[] for _ in caps]
 
+    # Containers for handedness confidence scores
+    confidence_hand = [[] for _ in caps]
+
     # Define expected lengths
     num_hand_keypoints = 21
     num_body_keypoints = 33
@@ -167,8 +170,10 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
             frame_keypoints_l = []
             frame_keypoints_r = []
             frame_keypoints_body = []
+            frame_confidence = [-1, -1]  # Default -1 (not detected)
 
             if hand_results.hand_landmarks:
+
                 # Iterate over all detected hands
                 for hand_landmarks, handedness_list in zip(hand_results.hand_landmarks, hand_results.handedness):
                     handedness = handedness_list[0]
@@ -177,9 +182,11 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
                     if handedness.category_name == 'Left':  # Check if the hand is labeled as 'Left'
                         frame_keypoints_l = [[int(frame.shape[1] * hand_landmark.x),
                                               int(frame.shape[0] * hand_landmark.y)] for hand_landmark in hand_landmarks]
+                        frame_confidence[0] = handedness.score
                     else:  # Right hand
                         frame_keypoints_r = [[int(frame.shape[1] * hand_landmark.x),
                                               int(frame.shape[0] * hand_landmark.y)] for hand_landmark in hand_landmarks]
+                        frame_confidence[1] = handedness.score
 
                     # Draw hand landmarks on the image
                     frame = draw_hand_landmarks_on_image(frame, hand_results)
@@ -209,6 +216,9 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
             kpts_cam_l[cam].append(frame_keypoints_l)
             kpts_cam_r[cam].append(frame_keypoints_r)
             kpts_body[cam].append(frame_keypoints_body)
+
+            # Handedness confidence
+            confidence_hand[cam].append(frame_confidence)
 
             # Resize the frame
             resized_frame = cv.resize(frame, (display_width, display_height))
@@ -249,8 +259,9 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
     kpts_cam_l = np.array(kpts_cam_l)
     kpts_cam_r = np.array(kpts_cam_r)
     kpts_body = np.array(kpts_body)
+    confidence_hand = np.array(confidence_hand)  # ncams x nframes x 2 hands
 
-    return kpts_cam_l, kpts_cam_r, kpts_body
+    return kpts_cam_l, kpts_cam_r, kpts_body, confidence_hand
 
 def select_folder_and_options():
     """
@@ -357,12 +368,13 @@ if __name__ == '__main__':
             for cam in range(ncams):
                 os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
 
-        kpts_caml, kpts_camr, kpts_cambody = run_mediapipe(vidnames, save_images=save_images,
-                                                           monitor_images=monitor_images, use_gpu=use_gpu)
+        kpts_caml, kpts_camr, kpts_cambody, handscore = run_mediapipe(vidnames, save_images=save_images,
+                                                                      monitor_images=monitor_images, use_gpu=use_gpu)
 
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_left'), kpts_caml)
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_right'), kpts_camr)
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_body'), kpts_cambody)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_handedness_score'), handscore)
 
         if save_images and save_video:
             os.makedirs(outdir_video_trial, exist_ok=True)
