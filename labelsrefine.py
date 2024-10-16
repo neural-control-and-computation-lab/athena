@@ -1,130 +1,14 @@
 # Libraries
 import cv2 as cv
 import glob
-from itertools import combinations
 from labels2d import createvideo
-import math
-import matplotlib.pyplot as plt
 import numpy as np
 import os
 from pathlib import Path
-from scipy.interpolate import splev, splrep
-from scipy import signal
 import time
 import tkinter as tk
 from tkinter import filedialog
 from tqdm import tqdm
-import toml
-
-
-def readcalibration(calibrationfile):
-    """
-    Outputs camera calibration parameters contained within a .toml file.
-
-    :param calibrationfile: Calibration file pathway.
-    :return: Extrinsic, intrinsic and distortion coefficients.
-    """
-
-    cal = toml.load(calibrationfile)
-    ncams = len(cal) - 1
-    extrinsics = []
-    intrinsics = []
-    dist_coeffs = []
-
-    for cam in range(ncams):
-        camname = 'cam_' + str(cam)
-
-        # Camera extrinsic parameters
-        cam_rotn = np.array(cal[camname]['rotation'])
-        cam_transln = np.array(cal[camname]['translation'])
-        cam_transform = transformationmatrix(cam_rotn, cam_transln)
-        extrinsics.append(cam_transform)
-
-        # Camera intrinsic parameters
-        cam_int = np.array(cal[camname]['matrix'])
-        intrinsics.append(cam_int)
-
-        # Camera distortion coefficients
-        cam_dist = np.array(cal[camname]['distortions'])
-        dist_coeffs.append(cam_dist)
-
-    return extrinsics, intrinsics, dist_coeffs
-
-
-def rotationmatrix(r):
-    """
-    Create rotation matrix from a rotation vector.
-
-    :param r: Axis of rotation.
-    :return: 3x3 rotation matrix.
-    """
-
-    theta = np.linalg.norm(r)
-    if theta == 0:
-        return np.eye(3)
-    else:
-        axis = r / theta
-        K = np.array([[0, -axis[2], axis[1]],
-                      [axis[2], 0, -axis[0]],
-                      [-axis[1], axis[0], 0]])
-        R = np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * np.dot(K, K)
-        return R
-
-
-def transformationmatrix(r, t):
-    """
-    Create a 4x4 transformation matrix based on a rotation vector and translation vector.
-
-    :param r: 3x3 rotation matrix.
-    :param t: translation vector.
-    :return: 4x4 transformation matrix.
-    """
-
-    R = rotationmatrix(r)
-    T = np.concatenate((R, t.reshape(3, 1)), axis=1)
-    T = np.vstack((T, [0, 0, 0, 1]))
-    return T
-
-
-def triangulate_simple(points, camera_mats):
-    """
-    Triangulates undistorted 2D landmark locations from each camera to a set of 3D points in global space.
-
-    Code from here: https://github.com/lambdaloop/aniposelib/blob/master/aniposelib/cameras.py
-
-    :param points: 2D camear landmark locations.
-    :param camera_mats: Camera extrinsic matrices.
-    :return: 3D points.
-    """
-
-    num_cams = len(camera_mats)
-    A = np.zeros((num_cams * 2, 4))
-    for i in range(num_cams):
-        x, y = points[i]
-        mat = camera_mats[i]
-        A[(i * 2):(i * 2 + 1)] = x * mat[2] - mat[0]
-        A[(i * 2 + 1):(i * 2 + 2)] = y * mat[2] - mat[1]
-    u, s, vh = np.linalg.svd(A, full_matrices=True)
-    p3d = vh[-1]
-    p3d = p3d[:3] / p3d[3]
-    return p3d
-
-
-def undistort_points(points, matrix, dist):
-    """
-    Undistorts 2D pixel points based on camera intrinsics and distortion coefficients.
-
-    Code from here: https://github.com/lambdaloop/aniposelib/blob/master/aniposelib/cameras.py
-
-    :param points: 2D pixel points of landmark locations.
-    :param matrix: Intrinsic camera parameters.
-    :param dist: Distortion coefficients.
-    :return: Undistorted 2D points of landmark locations.
-    """
-
-    points = points.reshape(-1, 1, 2)
-    out = cv.undistortPoints(points, matrix, dist)
-    return out
 
 
 def hex2bgr(hexcode):
@@ -254,81 +138,6 @@ def visualizelabels(input_streams, data):
         cap.release()
 
 
-def visualize_3d(p3ds, save_path=None):
-    """
-    Visualized 3D points in 3D space and saves images if filename given.
-
-    Code adapted from here: https://github.com/TemugeB/bodypose3d/blob/main/show_3d_pose.py
-
-    :param p3ds: 3D points
-    :param save_path: Filename of saved images.
-    """
-
-    # Creating links for each digit
-    thumb = [[0, 1], [1, 2], [2, 3], [3, 4]]
-    index = [[0, 5], [5, 6], [6, 7], [7, 8]]
-    middle = [[0, 9], [9, 10], [10, 11], [11, 12]]
-    ring = [[0, 13], [13, 14], [14, 15], [15, 16]]
-    little = [[0, 17], [17, 18], [18, 19], [19, 20]]
-    body = [thumb, index, middle, ring, little]
-    colors = ['#AAAAAA', '#EE3377', '#EE7733', '#009988', '#0077BB']
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-
-    # Determine axis ranges (ignoring first and last second)
-    axis_min = np.min(p3ds[30:-30], axis=(0, 1))
-    axis_max = np.max(p3ds[30:-30], axis=(0, 1))
-    axisrange = axis_max - axis_min
-    max_axisrange = max(axisrange)
-    max_axisrange = (math.ceil(max_axisrange / 100.00) * 100)
-
-    for framenum, kpts3d in enumerate(p3ds):
-
-        # Skip frames
-        # if framenum % 3 == 0:
-        #     continue
-
-        # Drawing links
-        for bodypart, part_color in zip(body, colors):
-            for _c in bodypart:
-                ax.plot(xs=[kpts3d[_c[0], 0], kpts3d[_c[1], 0]], ys=[kpts3d[_c[0], 1], kpts3d[_c[1], 1]],
-                        zs=[kpts3d[_c[0], 2], kpts3d[_c[1], 2]], linewidth=5, c=part_color, alpha=0.7)
-
-        # Drawing joints
-        for i in range(21):
-            ax.scatter(xs=kpts3d[i:i + 1, 0], ys=kpts3d[i:i + 1, 1], zs=kpts3d[i:i + 1, 2],
-                       marker='o', s=40, lw=2, c='white', edgecolors='black', alpha=0.7)
-
-        # Axis ticks
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_zticks([])
-
-        # Axis limits
-        ax.set_xlim3d([axis_min[0], axis_min[0]+max_axisrange])
-        ax.set_xlabel('X')
-        ax.set_ylim3d([axis_min[1], axis_min[1]+max_axisrange])
-        ax.set_ylabel('Y')
-        ax.set_zlim3d([axis_min[2], axis_min[2]+max_axisrange])
-        ax.set_zlabel('Z')
-        ax.view_init(-71, -73)
-
-        # Remove background
-        ax.set_axis_off()
-
-        if save_path is not None:
-            plt.savefig(save_path.format(framenum), dpi=100)
-        else:
-            plt.pause(0.1)
-        ax.cla()
-
-    if save_path is None:
-        plt.show()
-
-    plt.close(fig)
-
-
 # Run code
 if __name__ == '__main__':
 
@@ -357,6 +166,7 @@ if __name__ == '__main__':
     outdir_images = idfolder + '/images/'
     outdir_images_refined = idfolder + '/imagesrefined/'
     outdir_video = idfolder + '/videos_processed/'
+    outdir_data2d = idfolder + '/landmarks/'
     outdir_data3d = idfolder + '/landmarks/'
 
     # Make output directories if they do not exist (landmarks folder should already exist)
@@ -435,6 +245,9 @@ if __name__ == '__main__':
                     temp = np.copy(test[cam, i, 33:54, :])
                     test[cam, i, 33:54, :] = test[cam, i, 54:75, :]
                     test[cam, i, 54:75, :] = temp
+
+        # Save refined labels
+        np.save(outdir_data2d + trialname + '_2Dlandmarks', test)
 
         # Output visualizations
         # Refined 2D labels (note, these are from the unsynced data, so cam frames may be 1-3 frames off)
