@@ -167,7 +167,6 @@ if __name__ == '__main__':
     outdir_images_refined = idfolder + '/imagesrefined/'
     outdir_video = idfolder + '/videos_processed/'
     outdir_data2d = idfolder + '/landmarks/'
-    outdir_data3d = idfolder + '/landmarks/'
 
     # Make output directories if they do not exist (landmarks folder should already exist)
     if not os.path.exists(outdir_images):

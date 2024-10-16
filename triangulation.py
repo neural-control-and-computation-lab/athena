@@ -1,9 +1,7 @@
 # Libraries
 import cv2 as cv
 import glob
-from itertools import combinations
 from labels2d import createvideo
-import math
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -124,40 +122,45 @@ def visualize_3d(p3ds, save_path=None):
     :param save_path: Filename of saved images.
     """
 
-    # Creating links for each digit
-    thumb = [[0, 1], [1, 2], [2, 3], [3, 4]]
-    index = [[0, 5], [5, 6], [6, 7], [7, 8]]
-    middle = [[0, 9], [9, 10], [10, 11], [11, 12]]
-    ring = [[0, 13], [13, 14], [14, 15], [15, 16]]
-    little = [[0, 17], [17, 18], [18, 19], [19, 20]]
-    body = [thumb, index, middle, ring, little]
-    colors = ['#AAAAAA', '#EE3377', '#EE7733', '#009988', '#0077BB']
+    colours = ['#FDE7EF', '#FDE7EF', '#FDE7EF', '#FDE7EF',
+               '#F589B1', '#F589B1', '#F589B1', '#F589B1',
+               '#ED2B72', '#ED2B72', '#ED2B72', '#ED2B72',
+               '#A50E45', '#A50E45', '#A50E45', '#A50E45',
+               '#47061D', '#47061D', '#47061D', '#47061D',
+               '#E5F6FF', '#E5F6FF', '#E5F6FF', '#E5F6FF',
+               '#80D1FF', '#80D1FF', '#80D1FF', '#80D1FF',
+               '#1AACFF', '#1AACFF', '#1AACFF', '#1AACFF',
+               '#0072B3', '#0072B3', '#0072B3', '#0072B3',
+               '#00314D', '#00314D', '#00314D', '#00314D']
+    links = [[33, 34], [34, 35], [35, 36], [36, 37],  # right thumb
+             [33, 38], [38, 39], [39, 40], [40, 41],
+             [33, 42], [42, 43], [43, 44], [44, 45],
+             [33, 46], [46, 47], [47, 48], [48, 49],
+             [33, 50], [50, 51], [51, 52], [52, 53],
+             [54, 55], [55, 56], [56, 57], [57, 58],  # left thumb
+             [54, 59], [59, 60], [60, 61], [61, 62],
+             [54, 63], [63, 64], [64, 65], [65, 66],
+             [54, 67], [67, 68], [68, 69], [69, 70],
+             [54, 71], [71, 72], [72, 73], [73, 74]]
+    nframes = np.shape(p3ds)[0]
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
 
-    # Determine axis ranges (ignoring first and last second)
-    axis_min = np.min(p3ds[30:-30], axis=(0, 1))
-    axis_max = np.max(p3ds[30:-30], axis=(0, 1))
-    axisrange = axis_max - axis_min
-    max_axisrange = max(axisrange)
-    max_axisrange = (math.ceil(max_axisrange / 100.00) * 100)
-
-    for framenum, kpts3d in enumerate(p3ds):
+    for framenum in range(nframes):
 
         # Skip frames
-        # if framenum % 3 == 0:
-        #     continue
+        if framenum % 2 == 0:
+            continue
 
-        # Drawing links
-        for bodypart, part_color in zip(body, colors):
-            for _c in bodypart:
-                ax.plot(xs=[kpts3d[_c[0], 0], kpts3d[_c[1], 0]], ys=[kpts3d[_c[0], 1], kpts3d[_c[1], 1]],
-                        zs=[kpts3d[_c[0], 2], kpts3d[_c[1], 2]], linewidth=5, c=part_color, alpha=0.7)
+        for linknum, link in enumerate(links):
+            ax.plot(xs=[p3ds[framenum, link[0], 0], p3ds[framenum, link[1], 0]],
+                    ys=[p3ds[framenum, link[0], 1], p3ds[framenum, link[1], 1]],
+                    zs=[p3ds[framenum, link[0], 2], p3ds[framenum, link[1], 2]],
+                    linewidth=5, c=colours[linknum], alpha=0.7)
 
-        # Drawing joints
-        for i in range(21):
-            ax.scatter(xs=kpts3d[i:i + 1, 0], ys=kpts3d[i:i + 1, 1], zs=kpts3d[i:i + 1, 2],
+        for i in range(33, 75):
+            ax.scatter(xs=p3ds[framenum, i:i + 1, 0], ys=p3ds[framenum, i:i + 1, 1], zs=p3ds[framenum, i:i + 1, 2],
                        marker='o', s=40, lw=2, c='white', edgecolors='black', alpha=0.7)
 
         # Axis ticks
@@ -165,16 +168,14 @@ def visualize_3d(p3ds, save_path=None):
         ax.set_yticks([])
         ax.set_zticks([])
 
-        # Axis limits
-        ax.set_xlim3d([axis_min[0], axis_min[0]+max_axisrange])
+        # Axis limits and labels
+        ax.set_xlim3d([-1300, -300])
+        ax.set_ylim3d([-1500, -500])
+        ax.set_zlim3d([-2400, -1400])
         ax.set_xlabel('X')
-        ax.set_ylim3d([axis_min[1], axis_min[1]+max_axisrange])
         ax.set_ylabel('Y')
-        ax.set_zlim3d([axis_min[2], axis_min[2]+max_axisrange])
         ax.set_zlabel('Z')
-        ax.view_init(-71, -73)
-
-        # Remove background
+        ax.view_init(-67, -42)
         ax.set_axis_off()
 
         if save_path is not None:
@@ -210,34 +211,26 @@ if __name__ == '__main__':
     cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
     ncams = len(calfiles)
 
-    # Gather all combination of cameras
-    camlist = np.arange(ncams)
-    cam_combos = []
-    for cam in range(2, ncams+1):
-        combos = list(combinations(camlist, cam))
-        cam_combos.extend(combos)
-    ncombos = len(cam_combos)
-
     # Gather 2D data
-    trialdata = sorted(glob.glob(idfolder + '/landmarks/*2Dlandmarks_body.npy'))  ### NEED TO FIX INPUT HERE ###
+    trialdata = sorted(glob.glob(idfolder + '/landmarks/*2Dlandmarks.npy'))
 
     # Output directories
-    outdir_images = idfolder + '/images/'
     outdir_images_refined = idfolder + '/imagesrefined/'
     outdir_video = idfolder + '/videos_processed/'
-    outdir_data2d = idfolder + '/landmarks/'
     outdir_data3d = idfolder + '/landmarks/'
 
     for trial in tqdm(trialdata):
 
         # Identify trial name
         filename = os.path.basename(trial)
-        fileparts = filename.split('_2Dlandmarks_body.npy')  ### NEED TO FIX INPUT HERE ###
+        fileparts = filename.split('_2Dlandmarks.npy')
         trialname = fileparts[0]
         print(trialname)
 
-        # Load 2D hand location data
+        # Load 2D hand location data and reshape
         data_2d = np.load(trial).astype(float)
+        nlandmarks = np.shape(data_2d)[2]
+        data_2d = data_2d.reshape((ncams, -1, 2))
 
         # Check # of cameras
         if ncams != data_2d.shape[0]:
@@ -245,7 +238,7 @@ if __name__ == '__main__':
             quit()
 
         # Undistort 2D points based on camera intrinsics and distortion coefficients
-        # Output is ncams x (nframes x 21 landmarks) x 2-dimension
+        # Output is ncams x (nframes x nlandmarks) x 2-dimension
         data_2d_undistort = np.empty(data_2d.shape)
         for cam in range(ncams):
             data_2d_undistort[cam] = undistort_points(data_2d[cam].astype(float), cam_mats_intrinsic[cam],
@@ -253,60 +246,38 @@ if __name__ == '__main__':
 
         # Outputting 3D points
         # Code adapted from aniposelib: https://github.com/lambdaloop/aniposelib/blob/master/aniposelib/cameras.py
-        npoints = data_2d_undistort.shape[1]  # nframes x 21
-        for combo in cam_combos:
-            data3d = np.empty((npoints, 3))
-            data3d[:] = np.nan
-            cam_mats_extrinsic_sub = [cam_mats_extrinsic[cam] for cam in combo]
+        npoints = data_2d_undistort.shape[1]  # nframes x nlandmarks
+        data3d = np.empty((npoints, 3))
+        data3d[:] = np.nan
+        print('Triangulating.')
+        for point in range(npoints):
 
-            for point in range(npoints):
+            subp = data_2d_undistort[:, point, :]
 
-                # Selecting only from the specific camera combinations for the given frame/landmark point
-                subp = data_2d_undistort[combo, point, :]
+            # Check how many cameras picked up the landmark for the given frame
+            good = ~np.isnan(subp[:, 0])
 
-                # Check how many cameras picked up the landmark for the given frame
-                good = ~np.isnan(subp[:, 0])
+            # Require at least 2 cameras to have picked up a landmark to triangulate, otherwise keep as nan
+            if np.sum(good) >= 2:
+                data3d[point] = triangulate_simple(subp[good], np.array(cam_mats_extrinsic)[good])
 
-                # Require at least 2 cameras to have picked up a landmark to triangulate, otherwise keep as nan
-                if np.sum(good) >= 2:
-                    data3d[point] = triangulate_simple(subp[good], np.array(cam_mats_extrinsic_sub)[good])
+        # Reshaping to nframes x nlandmarks x 3-dimension
+        data3d = data3d.reshape((int(len(data3d)/nlandmarks), nlandmarks, 3))
 
-            # Reshaping to nframes x 21 landmarks x 3-dimension
-            data3d = data3d.reshape((int(len(data3d) / 21), 21, 3))
-
-            # Save 3D landmarks as np array
-            if len(combo) == ncams:  # Using all cameras
-                data3d_use = data3d.copy()
-
-            camcombo_str = ''.join(map(str, combo))
-            outdir_data3d_subset = outdir_data3d + '3d/' + camcombo_str + '/'
-            if not os.path.exists(outdir_data3d_subset):
-                os.mkdir(outdir_data3d_subset)
-            np.save(outdir_data3d_subset + trialname + '_3Dlandmarks', data3d)
-
-        # Missing data
-        missing = np.count_nonzero(np.isnan(data3d_use))/3
-        print('Frames missing: ' + str(missing))
+        # Save 3D landmarks as np array
+        np.save(outdir_data3d + trialname + '_3Dlandmarks', data3d)
 
         # Output directories for the specific trial (for visualizations)
         outdir_images_trialfolder = outdir_images_refined + str(trialname) + '/data3d/'
-        if not os.path.exists(outdir_images + str(trialname)):
-            os.mkdir(outdir_images + str(trialname))
-            for cam in range(ncams):
-                os.mkdir(outdir_images + trialname + '/cam' + str(cam))
-        if not os.path.exists(outdir_images_refined + str(trialname)):
-            os.mkdir(outdir_images_refined + str(trialname))
-            for cam in range(ncams):
-                os.mkdir(outdir_images_refined + trialname + '/cam' + str(cam))
         if not os.path.exists(outdir_images_trialfolder):
             os.mkdir(outdir_images_trialfolder)
         outdir_video_trialfolder = outdir_video + str(trialname)
         if not os.path.exists(outdir_video_trialfolder):
             os.mkdir(outdir_video_trialfolder)
 
-        # Output visualizations
-        # 3D datapoints
-        visualize_3d(data3d_use, save_path=outdir_images_trialfolder + 'frame_{:04d}.png')
+        # Output 3D visualizations
+        print('Saving video.')
+        visualize_3d(data3d, save_path=outdir_images_trialfolder + 'frame_{:04d}.png')
         createvideo(image_folder=outdir_images_trialfolder, extension='.png', fs=30,
                     output_folder=outdir_video_trialfolder, video_name='data3d.mp4')
 
