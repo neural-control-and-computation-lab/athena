@@ -6,282 +6,342 @@ import numpy as np
 import os
 from pathlib import Path
 import time
-import tkinter as tk
-from tkinter import filedialog
 from tqdm import tqdm
-
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from mediapipe import solutions
+from mediapipe.framework.formats import landmark_pb2
+from mediapipe.tasks.python import vision
+from mediapipe.tasks.python.vision import HandLandmarker, PoseLandmarker, HandLandmarkerOptions, PoseLandmarkerOptions, RunningMode
 
 def createvideo(image_folder, extension, fs, output_folder, video_name):
     """
     Compiling a set of images into a video.
-    Code adapted from here: https://stackoverflow.com/questions/44947505/how-to-make-a-movie-out-of-images-in-python
-
-    :param image_folder: Pathway containing all images.
-    :param extension: Extension of images.
-    :param fs: Sampling rate.
-    :param output_folder: Pathway of output video.
-    :param video_name: Name of output video.
     """
-
-    # Create output folder
     if not os.path.exists(output_folder):
         os.mkdir(output_folder)
 
-    # Gather and read images
     images = [img for img in os.listdir(image_folder) if img.endswith(extension)]
+    if not images:
+        print(f"No images found in {image_folder}.")
+        return
+
     frame = cv.imread(os.path.join(image_folder, images[0]))
     height, width, layers = frame.shape
 
-    # Write video
-    fourcc = cv.VideoWriter_fourcc(*'mp4v')  # Had codec as 0 before - Anaconda gave warning (though videos saved)
-    video = cv.VideoWriter(output_folder + '/' + video_name, fourcc, fs, (width, height))
+    fourcc = cv.VideoWriter_fourcc(*'mp4v')
+    video = cv.VideoWriter(os.path.join(output_folder, video_name), fourcc, fs, (width, height))
+
     for image in images:
         video.write(cv.imread(os.path.join(image_folder, image)))
 
-    # Clear windows
-    cv.destroyAllWindows()
     video.release()
+    cv.destroyAllWindows()
 
+def draw_pose_landmarks_on_image(rgb_image, detection_result):
+    pose_landmarks_list = detection_result.pose_landmarks
+    annotated_image = np.copy(rgb_image)
 
-def run_mediapipe(input_streams, save_images=None):
+    # Loop through the detected poses to visualize.
+    for idx in range(len(pose_landmarks_list)):
+        pose_landmarks = pose_landmarks_list[idx]
+
+        # Draw the pose landmarks.
+        pose_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+        pose_landmarks_proto.landmark.extend([
+          landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in pose_landmarks
+        ])
+        solutions.drawing_utils.draw_landmarks(
+          annotated_image,
+          pose_landmarks_proto,
+          solutions.pose.POSE_CONNECTIONS,
+          solutions.drawing_styles.get_default_pose_landmarks_style())
+    return annotated_image
+
+def draw_hand_landmarks_on_image(rgb_image, detection_result):
+    MARGIN = 10  # pixels
+    FONT_SIZE = 1
+    FONT_THICKNESS = 1
+    HANDEDNESS_TEXT_COLOR = (88, 205, 54)  # vibrant green
+
+    hand_landmarks_list = detection_result.hand_landmarks
+    handedness_list = detection_result.handedness
+    annotated_image = np.copy(rgb_image)
+
+    # Loop through the detected hands to visualize both
+    for idx in range(len(hand_landmarks_list)):
+        hand_landmarks = hand_landmarks_list[idx]
+        handedness = handedness_list[idx][0]  # Access the first item in the handedness list
+
+        # Draw the hand landmarks.
+        hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+        hand_landmarks_proto.landmark.extend([
+            landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
+        ])
+        solutions.drawing_utils.draw_landmarks(
+            annotated_image,
+            hand_landmarks_proto,
+            solutions.hands.HAND_CONNECTIONS,
+            solutions.drawing_styles.get_default_hand_landmarks_style(),
+            solutions.drawing_styles.get_default_hand_connections_style())
+
+        # Get the top left corner of the detected hand's bounding box.
+        height, width, _ = annotated_image.shape
+        x_coordinates = [landmark.x for landmark in hand_landmarks]
+        y_coordinates = [landmark.y for landmark in hand_landmarks]
+        text_x = int(min(x_coordinates) * width)
+        text_y = int(min(y_coordinates) * height) - MARGIN
+
+        # Draw handedness (left or right hand) on the image.
+        cv.putText(annotated_image, f"{handedness.category_name}",  # Now correctly accessing category_name
+                   (text_x, text_y), cv.FONT_HERSHEY_DUPLEX,
+                   FONT_SIZE, HANDEDNESS_TEXT_COLOR, FONT_THICKNESS, cv.LINE_AA)
+
+    return annotated_image
+
+def run_mediapipe(input_streams, save_images=False, monitor_images=False, display_width=480, display_height=320):
+    # Load HandLandmarker and PoseLandmarker models
+    hand_model_path = 'hand_landmarker.task'
+    pose_model_path = 'pose_landmarker_full.task'
+
+    hand_options = HandLandmarkerOptions(
+        base_options=mp.tasks.BaseOptions(model_asset_path=hand_model_path,
+                                          delegate=mp.tasks.BaseOptions.Delegate.GPU),
+        running_mode=RunningMode.VIDEO,
+        num_hands = 2
+    )
+    pose_options = PoseLandmarkerOptions(
+        base_options=mp.tasks.BaseOptions(model_asset_path=pose_model_path,
+                                          delegate=mp.tasks.BaseOptions.Delegate.GPU),
+        running_mode=RunningMode.VIDEO
+    )
 
     # Create a list of cameras based on input_streams
     caps = [cv.VideoCapture(stream) for stream in input_streams]
+    fps = caps[0].get(cv.CAP_PROP_FPS)  # Assume all streams have the same frame rate
 
-    # Set camera resolution
-    for cap in caps:
-        width = int(cap.get(3))
-        height = int(cap.get(4))
-        cap.set(3, height)
-        cap.set(4, width)
-
-    # Create hand key points detector objects for each camera
-    nhands = 2
-    hands = [mp.solutions.hands.Hands(min_detection_confidence=0.50, max_num_hands=nhands, min_tracking_confidence=0.50)
-             for cap in caps]
-    pose = [mp.solutions.pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.50) for cap in caps]
+    # Initialize HandLandmarker and PoseLandmarker for each camera
+    hand_landmarkers = [HandLandmarker.create_from_options(hand_options) for _ in caps]
+    pose_landmarkers = [PoseLandmarker.create_from_options(pose_options) for _ in caps]
 
     # Containers for detected key points for each camera
-    kpts_cam_l = [[] for cap in caps]
-    kpts_cam_r = [[] for cap in caps]
-    kpts_body = [[] for cap in caps]
+    kpts_cam_l = [[] for _ in caps]
+    kpts_cam_r = [[] for _ in caps]
+    kpts_body = [[] for _ in caps]
 
-    # Initialize frame number
-    framenum = 0
+    # Initialize frame number for each camera
+    framenums = [0] * len(caps)
 
     while True:
-
-        # Read frames from videos
         frames = [cap.read() for cap in caps]
-
-        # If wasn't able to read, break
         if not all(ret for ret, _ in frames):
             break
 
-        # Convert frames from BGR to RGB
+        # Process each frame for hand and pose landmarks
         for cam, (_, frame) in enumerate(frames):
-            frames[cam] = (True, cv.cvtColor(frame, cv.COLOR_BGR2RGB))
+            # Convert frame from BGR to RGB as required by Mediapipe
+            #mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv.cvtColor(frame, cv.COLOR_BGR2RGB))
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGBA, data=cv.cvtColor(frame, cv.COLOR_BGR2RGBA))
+            timestamp_ms = int(framenums[cam] * 1000 / fps)
 
-        # To improve performance, optionally mark the image as not writeable to pass by reference
-        for cam, (_, frame) in enumerate(frames):
-            frames[cam] = (True, frame.copy())
-            frame.flags.writeable = False
+            # Hand Landmarks detection with the camera's specific detector
+            hand_results = hand_landmarkers[cam].detect_for_video(mp_image, timestamp_ms)
+            if hand_results.hand_landmarks:
+                frame_keypoints_l = []
+                frame_keypoints_r = []
 
-        # Mediapipe output
-        results = [hands[cam].process(frame) for cam, (_, frame) in enumerate(frames)]
-        results_pose = [pose[cam].process(frame) for cam, (_, frame) in enumerate(frames)]
+                # Iterate over all detected hands
+                for hand_landmarks, handedness_list in zip(hand_results.hand_landmarks, hand_results.handedness):
+                    handedness = handedness_list[0]
 
-        # Access 2D hand landmarks (pixel coordinates) if detected (otherwise [-1, -1])
-        for cam, (ret, frame) in enumerate(frames):
+                    # Loop over each hand landmark (21 landmarks per hand)
+                    if handedness.category_name == 'Left':  # Check if the hand is labeled as 'Left'
+                        frame_keypoints_l = [[int(frame.shape[1] * hand_landmark.x),
+                                              int(frame.shape[0] * hand_landmark.y)] for hand_landmark in
+                                             hand_landmarks]
+                    else:  # Right hand
+                        frame_keypoints_r = [[int(frame.shape[1] * hand_landmark.x),
+                                              int(frame.shape[0] * hand_landmark.y)] for hand_landmark in
+                                             hand_landmarks]
 
-            if results[cam].multi_hand_landmarks:
+                # Append key points for each hand (left and right)
+                kpts_cam_l[cam].append(frame_keypoints_l if frame_keypoints_l else [[-1, -1]] * 21)
+                kpts_cam_r[cam].append(frame_keypoints_r if frame_keypoints_r else [[-1, -1]] * 21)
 
-                nhands_detected = len(results[cam].multi_hand_landmarks)
+                # Draw both hands' landmarks
+                frame = draw_hand_landmarks_on_image(frame, hand_results)
 
-                if nhands_detected == 1:
-                    hand_landmarks = results[cam].multi_hand_landmarks[0]
-                    frame_keypoints = []
-                    for p in range(21):
-                        pxl_x = int(round(frame.shape[1] * hand_landmarks.landmark[p].x))
-                        pxl_y = int(round(frame.shape[0] * hand_landmarks.landmark[p].y))
-                        kpts = [pxl_x, pxl_y]
-                        frame_keypoints.append(kpts)
-
-                    # Check handedness and append key points
-                    # Note: handedness is based on mirror image, so if detected is left then actually a right hand
-                    handedness = results[cam].multi_handedness[0].classification[0].label
-                    if handedness == 'Left':
-                        kpts_cam_r[cam].append(frame_keypoints)
-                        kpts_cam_l[cam].append([[-1, -1]] * 21)
-                    else:
-                        kpts_cam_r[cam].append([[-1, -1]] * 21)
-                        kpts_cam_l[cam].append(frame_keypoints)
-
-                elif nhands_detected == 2:
-
-                    frame_keypoints_l = []
-                    frame_keypoints_r = []
-                    handedness = results[cam].multi_handedness[0].classification[0].label  # Of the first detected hand
-
-                    # Check handedness
-                    if handedness == 'Left':
-                        hand_landmarks_r = results[cam].multi_hand_landmarks[0]
-                        hand_landmarks_l = results[cam].multi_hand_landmarks[1]
-                    else:  # Assuming the other is a right hand (reasonable assumption unless multiple people in frame)
-                        hand_landmarks_r = results[cam].multi_hand_landmarks[1]
-                        hand_landmarks_l = results[cam].multi_hand_landmarks[0]
-
-                    for p in range(21):
-                        pxl_x_r = int(round(frame.shape[1] * hand_landmarks_r.landmark[p].x))
-                        pxl_y_r = int(round(frame.shape[0] * hand_landmarks_r.landmark[p].y))
-                        kpts_r = [pxl_x_r, pxl_y_r]
-                        frame_keypoints_r.append(kpts_r)
-
-                        pxl_x_l = int(round(frame.shape[1] * hand_landmarks_l.landmark[p].x))
-                        pxl_y_l = int(round(frame.shape[0] * hand_landmarks_l.landmark[p].y))
-                        kpts_l = [pxl_x_l, pxl_y_l]
-                        frame_keypoints_l.append(kpts_l)
-
-                    # Append key points
-                    kpts_cam_r[cam].append(frame_keypoints_r)
-                    kpts_cam_l[cam].append(frame_keypoints_l)
-
-                # In rare circumstances, mediapipe will detect more than max # hands detected (> 2 here).
-                # I fill with blanks to err on safe side and interpolate after since these are rare cases (1 frame in
-                # 1 video out of 1040 recorded videos), and tasks here are quite slow so interpolation works fine.
-                # Alternative #1: Pick from the detected hands.
-                # Alternative #2: Set static_image_mode=True (treats images as sequence of [possibly unrelated] images)
-                # https://stackoverflow.com/questions/76648549/mediapipe-max-num-hands-not-working-properly
-                elif nhands_detected > 2:
-                    print('WARNING: More than 2 hands detected. Frame #: ' + str(framenum) + '; Cam #: ' + str(cam))
-                    kpts_cam_r[cam].append([[-1, -1]] * 21)
-                    kpts_cam_l[cam].append([[-1, -1]] * 21)
-
-            else:
-                kpts_cam_r[cam].append([[-1, -1]] * 21)
-                kpts_cam_l[cam].append([[-1, -1]] * 21)
-
-            if results_pose[cam].pose_landmarks:
+            # Pose Landmarks detection with the camera's specific detector
+            pose_results = pose_landmarkers[cam].detect_for_video(mp_image, timestamp_ms)
+            # Ensure pose_landmarks exists and iterate through detected poses
+            if pose_results.pose_landmarks:
                 frame_keypoints_body = []
-                for i, body_landmark in enumerate(results_pose[cam].pose_landmarks.landmark):
-                    pxl_x_body = body_landmark.x * frame.shape[1]
-                    pxl_y_body = body_landmark.y * frame.shape[0]
-                    pxl_x_body = int(round(pxl_x_body))
-                    pxl_y_body = int(round(pxl_y_body))
-                    frame_keypoints_body.append([pxl_x_body, pxl_y_body])
+                # Iterate through each pose in the list (even if it's a single pose)
+                for pose_landmarks in pose_results.pose_landmarks:
+                    if hasattr(pose_landmarks, 'landmark'):
+                        for i, body_landmark in enumerate(pose_landmarks.landmark):
+                            pxl_x_body = int(round(body_landmark.x * frame.shape[1]))
+                            pxl_y_body = int(round(body_landmark.y * frame.shape[0]))
+                            frame_keypoints_body.append([pxl_x_body, pxl_y_body])
+
+                # Append body key points
                 kpts_body[cam].append(frame_keypoints_body)
-            else:
+
+                # Draw pose landmarks
+                frame = draw_pose_landmarks_on_image(frame, pose_results)
+
+            # If no pose detected, append empty keypoints
+            if not pose_results.pose_landmarks:
                 kpts_body[cam].append([[-1, -1]] * 33)
 
-            # Draw hand landmarks
-            frame.flags.writeable = True
-            frame = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
-            if results[cam].multi_hand_landmarks:
-                for hand_landmarks in results[cam].multi_hand_landmarks:
-                    mp.solutions.drawing_utils.draw_landmarks(frame, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
-            if results_pose[cam].pose_landmarks:
-                mp.solutions.drawing_utils.draw_landmarks(frame, results_pose[cam].pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS)
+            # Resize the frame
+            resized_frame = cv.resize(frame, (display_width, display_height))
 
-            # Display and save images
-            # cv.imshow(f'cam{cam}', frame)
-            if save_images is True:
-                cv.imwrite(outdir_images + trialname + '/cam' + str(cam) + '/' + 'frame' + f'{framenum:04d}' + '.png', frame)
+            # display if monitoring
+            if monitor_images:
+                # Set a grid layout for displaying each camera feed
+                window_x = (cam % 4) * (display_width + 10)  # Adjust for 4 columns
+                window_y = (cam // 4) * (display_height + 30)  # Adjust row position
 
-        k = cv.waitKey(1)
-        if k & 0xFF == 27:  # ESC key
+                cv.imshow(f'cam{cam}', resized_frame)
+                cv.moveWindow(f'cam{cam}', window_x, window_y)
+
+            # Save images if needed
+            if save_images:
+                save_path = f'{outdir_images_trial}/cam{cam}/frame{framenums[cam]:04d}.png'
+                result = cv.imwrite(save_path, resized_frame)
+                if not result:
+                    print(f"Failed to save frame {framenums[cam]:04d} for cam {cam} in PNG format at {save_path}")
+
+            # Increment the frame number for the current camera
+            framenums[cam] += 1
+
+        if cv.waitKey(1) & 0xFF == 27:  # ESC to exit
             break
 
-        # Increment frame number
-        print(framenum)
-        framenum += 1
-
-    # Clear windows
+    # Release resources
     cv.destroyAllWindows()
     for cap in caps:
         cap.release()
 
-    # Return 2D hand landmarks
+    # Close all HandLandmarker and PoseLandmarker instances
+    for hand_landmarker, pose_landmarker in zip(hand_landmarkers, pose_landmarkers):
+        hand_landmarker.close()
+        pose_landmarker.close()
+
     return np.array(kpts_cam_l), np.array(kpts_cam_r), np.array(kpts_body)
 
+def select_folder_and_options():
+    """
+    Create GUI to select folder and set options for saving images/videos and monitoring.
+    """
+    def on_submit():
+        global save_images, save_video, monitor_images, idfolder
+        save_images = var_save_images.get()
+        save_video = var_save_video.get()
+        monitor_images = var_monitor_images.get()
+        if not idfolder:
+            messagebox.showerror("Error", "No folder selected!")
+        else:
+            root.quit()  # Close the window
 
-# Run code
+    # Create a tkinter root window
+    root = tk.Tk()
+    root.title("Options for Processing")
+
+    # Set window size and center it on the screen
+    window_width = 500
+    window_height = 200
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    position_x = int((screen_width / 2) - (window_width / 2))
+    position_y = int((screen_height / 2) - (window_height / 2))
+    root.geometry(f'{window_width}x{window_height}+{position_x}+{position_y}')
+
+    # Select folder button and folder label
+    def select_folder():
+        global idfolder
+        idfolder = filedialog.askdirectory(initialdir=str(Path(os.getcwd())))
+        folder_label.config(text="Folder: " + idfolder)
+
+    idfolder = ""  # Initialize folder path
+    btn_select_folder = tk.Button(root, text="Select Folder", command=select_folder)
+    btn_select_folder.grid(row=0, column=0, padx=10, pady=10)
+
+    folder_label = tk.Label(root, text="Folder: Not selected", anchor='w', wraplength=450)
+    folder_label.grid(row=0, column=1, padx=10, pady=10, columnspan=3, sticky="w")
+
+    # Checkbox for saving images, videos, and monitoring images
+    var_save_images = tk.BooleanVar(value=False)
+    var_save_video = tk.BooleanVar(value=False)
+    var_monitor_images = tk.BooleanVar(value=False)
+
+    chk_save_images = tk.Checkbutton(root, text="Save Images", variable=var_save_images)
+    chk_save_images.grid(row=1, column=0, padx=10, pady=5)
+
+    chk_save_video = tk.Checkbutton(root, text="Save Video", variable=var_save_video)
+    chk_save_video.grid(row=1, column=1, padx=10, pady=5)
+
+    chk_monitor_images = tk.Checkbutton(root, text="Monitor Images", variable=var_monitor_images)
+    chk_monitor_images.grid(row=1, column=2, padx=10, pady=5)
+
+    # Submit button
+    btn_submit = tk.Button(root, text="GO", command=on_submit)
+    btn_submit.grid(row=2, column=1, padx=10, pady=20)
+
+    root.mainloop()
+
 if __name__ == '__main__':
-
-    # Counter
     start = time.time()
 
-    # Define working directory
-    wdir = Path(os.getcwd())
+    select_folder_and_options()
 
-    # Create a tkinter root window (it won't be displayed)
-    root = tk.Tk()
-    root.withdraw()
+    if idfolder:
+        id = os.path.basename(os.path.normpath(idfolder))
 
-    # Open a dialog box to select participant's folder
-    idfolder = filedialog.askdirectory(initialdir=str(wdir))
-    id = os.path.basename(os.path.normpath(idfolder))
+        trialfolders = sorted(glob.glob(os.path.join(idfolder, 'videos/*Recording*')))
+        outdir_images = os.path.join(idfolder, 'images/')
+        outdir_video = os.path.join(idfolder, 'videos_processed/')
+        outdir_data2d = os.path.join(idfolder, 'landmarks/')
 
-    # Gather trial folders
-    trialfolders = sorted(glob.glob(idfolder + '/videos/*Recording*'))
+        print(f"Selected Folder: {idfolder}")
+        print(f"Save Images: {save_images}")
+        print(f"Save Video: {save_video}")
 
-    # Options for image and video saving (can increase code run time substantially)
-    saveimages = True   # Takes up a lot of space, so caution if saving
-    savevideo = True    # Can only be done if images saved
-
-    # Output directories
-    outdir_images = idfolder + '/images/'
-    outdir_video = idfolder + '/videos_processed/'
-    outdir_data2d = idfolder + '/landmarks/'
-
-    # Make output directories if they do not exist
-    if saveimages is True:
-        if not os.path.exists(outdir_images):
-            os.mkdir(outdir_images)
-        if savevideo is True:
-            if not os.path.exists(outdir_video):
-                os.mkdir(outdir_video)
-    if not os.path.exists(outdir_data2d):
-        os.mkdir(outdir_data2d)
+        if save_video and not save_images:
+            print("Cannot save video without saving images. Adjusting settings.")
+            save_video = False
 
     for trial in tqdm(trialfolders):
-
-        # Identify trial name
         trialname = os.path.basename(trial)
         print(trialname)
 
-        # Gather trial videos
-        vidnames = sorted(glob.glob(trial + '/*.avi'))
+        vidnames = sorted(glob.glob(os.path.join(trial, '*.avi')))
         ncams = len(vidnames)
 
-        # Create sub folders for given trial (for each camera) for storing labelled images
-        if saveimages is True:
-            if not os.path.exists(outdir_images + trialname):
-                os.mkdir(outdir_images + trialname)
-                for cam in range(ncams):
-                    os.mkdir(outdir_images + trialname + '/cam' + str(cam))
+        outdir_images_trial = os.path.join(outdir_images, trialname)
+        outdir_video_trial = os.path.join(outdir_video, trialname)
+        outdir_data2d_trial = os.path.join(outdir_data2d, trialname)
 
-        # Obtain 2D landmarks from each camera
-        kpts_caml, kpts_camr, kpts_cambody = run_mediapipe(vidnames, save_images=saveimages)
-
-        # Save 2D landmarks as np array (ncameras x nframes x 21 landmarks x 2dimension)
-        np.save(outdir_data2d + trialname + '_2Dlandmarks_left', kpts_caml)
-        np.save(outdir_data2d + trialname + '_2Dlandmarks_right', kpts_camr)
-        np.save(outdir_data2d + trialname + '_2Dlandmarks_body', kpts_cambody)
-
-        # Create video from 2D labelled images
-        if saveimages and savevideo is True:
-
-            # Output directory for given trial
-            if not os.path.exists(outdir_video + trialname):
-                os.mkdir(outdir_video + trialname)
-
-            # Save video
+        if save_images:
+            os.makedirs(outdir_images_trial, exist_ok=True)
+            os.makedirs(outdir_data2d_trial, exist_ok=True)
             for cam in range(ncams):
-                imagefolder = outdir_images + trialname + '/cam' + str(cam)
-                print('Saving video.')
-                createvideo(image_folder=imagefolder, extension='.png', fs=60,
-                            output_folder=outdir_video + trialname, video_name='cam' + str(cam) + '.mp4')
+                os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
 
-    # Counter
+        kpts_caml, kpts_camr, kpts_cambody = run_mediapipe(vidnames, save_images=save_images,
+                                                           monitor_images=monitor_images)
+
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_left'), kpts_caml)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_right'), kpts_camr)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_body'), kpts_cambody)
+
+        if save_images and save_video:
+            os.makedirs(outdir_video_trial, exist_ok=True)
+            for cam in range(ncams):
+                imagefolder = os.path.join(outdir_images_trial, f'/cam{cam}')
+                createvideo(image_folder=imagefolder, extension='.png', fs=60,
+                            output_folder=os.path.join(outdir_video_trial, trialname), video_name=f'cam{cam}.mp4')
+
     end = time.time()
-    print('Time to run code: ' + str(end - start) + ' seconds')
+    print(f'Time to run code: {end - start} seconds')
