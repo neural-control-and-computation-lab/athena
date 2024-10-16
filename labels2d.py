@@ -98,7 +98,6 @@ def draw_hand_landmarks_on_image(rgb_image, detection_result):
                    FONT_SIZE, HANDEDNESS_TEXT_COLOR, FONT_THICKNESS, cv.LINE_AA)
 
     return annotated_image
-
 def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gpu=True, display_width=450, display_height=360):
     # Load HandLandmarker and PoseLandmarker models
     hand_model_path = 'hand_landmarker.task'
@@ -130,10 +129,14 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
     kpts_cam_r = [[] for _ in caps]
     kpts_body = [[] for _ in caps]
 
+    # Define expected lengths
+    num_hand_keypoints = 21
+    num_body_keypoints = 33
+
     # Initialize frame number for each camera
     framenums = [0] * len(caps)
 
-    while True:
+    while framenums[0] < 10:
         frames = [cap.read() for cap in caps]
         if not all(ret for ret, _ in frames):
             break
@@ -150,10 +153,11 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
 
             # Hand Landmarks detection with the camera's specific detector
             hand_results = hand_landmarkers[cam].detect_for_video(mp_image, timestamp_ms)
-            if hand_results.hand_landmarks:
-                frame_keypoints_l = []
-                frame_keypoints_r = []
+            frame_keypoints_l = []
+            frame_keypoints_r = []
+            frame_keypoints_body = []
 
+            if hand_results.hand_landmarks:
                 # Iterate over all detected hands
                 for hand_landmarks, handedness_list in zip(hand_results.hand_landmarks, hand_results.handedness):
                     handedness = handedness_list[0]
@@ -161,42 +165,39 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
                     # Loop over each hand landmark (21 landmarks per hand)
                     if handedness.category_name == 'Left':  # Check if the hand is labeled as 'Left'
                         frame_keypoints_l = [[int(frame.shape[1] * hand_landmark.x),
-                                              int(frame.shape[0] * hand_landmark.y)] for hand_landmark in
-                                             hand_landmarks]
+                                              int(frame.shape[0] * hand_landmark.y)] for hand_landmark in hand_landmarks]
                     else:  # Right hand
                         frame_keypoints_r = [[int(frame.shape[1] * hand_landmark.x),
-                                              int(frame.shape[0] * hand_landmark.y)] for hand_landmark in
-                                             hand_landmarks]
+                                              int(frame.shape[0] * hand_landmark.y)] for hand_landmark in hand_landmarks]
 
-                # Append key points for each hand (left and right)
-                kpts_cam_l[cam].append(frame_keypoints_l if frame_keypoints_l else [[-1, -1]] * 21)
-                kpts_cam_r[cam].append(frame_keypoints_r if frame_keypoints_r else [[-1, -1]] * 21)
-
-                # Draw both hands' landmarks
-                frame = draw_hand_landmarks_on_image(frame, hand_results)
+                    # Draw hand landmarks on the image
+                    frame = draw_hand_landmarks_on_image(frame, hand_results)
 
             # Pose Landmarks detection with the camera's specific detector
             pose_results = pose_landmarkers[cam].detect_for_video(mp_image, timestamp_ms)
-            # Ensure pose_landmarks exists and iterate through detected poses
+
             if pose_results.pose_landmarks:
-                frame_keypoints_body = []
                 # Iterate through each pose in the list (even if it's a single pose)
                 for pose_landmarks in pose_results.pose_landmarks:
                     if hasattr(pose_landmarks, 'landmark'):
-                        for i, body_landmark in enumerate(pose_landmarks.landmark):
-                            pxl_x_body = int(round(body_landmark.x * frame.shape[1]))
-                            pxl_y_body = int(round(body_landmark.y * frame.shape[0]))
-                            frame_keypoints_body.append([pxl_x_body, pxl_y_body])
+                        frame_keypoints_body = [[int(round(body_landmark.x * frame.shape[1])),
+                                                 int(round(body_landmark.y * frame.shape[0]))] for body_landmark in pose_landmarks.landmark]
 
-                # Append body key points
-                kpts_body[cam].append(frame_keypoints_body)
+                    # Draw pose landmarks on the image
+                    frame = draw_pose_landmarks_on_image(frame, pose_results)
 
-                # Draw pose landmarks
-                frame = draw_pose_landmarks_on_image(frame, pose_results)
+            # Ensure each list has the correct number of keypoints by padding
+            if len(frame_keypoints_l) < num_hand_keypoints:
+                frame_keypoints_l += [[-1, -1]] * (num_hand_keypoints - len(frame_keypoints_l))
+            if len(frame_keypoints_r) < num_hand_keypoints:
+                frame_keypoints_r += [[-1, -1]] * (num_hand_keypoints - len(frame_keypoints_r))
+            if len(frame_keypoints_body) < num_body_keypoints:
+                frame_keypoints_body += [[-1, -1]] * (num_body_keypoints - len(frame_keypoints_body))
 
-            # If no pose detected, append empty keypoints
-            if not pose_results.pose_landmarks:
-                kpts_body[cam].append([[-1, -1]] * 33)
+            # Append padded key points for each hand (left and right) and body
+            kpts_cam_l[cam].append(frame_keypoints_l)
+            kpts_cam_r[cam].append(frame_keypoints_r)
+            kpts_body[cam].append(frame_keypoints_body)
 
             # Resize the frame
             resized_frame = cv.resize(frame, (display_width, display_height))
@@ -233,7 +234,12 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
         hand_landmarker.close()
         pose_landmarker.close()
 
-    return np.array(kpts_cam_l), np.array(kpts_cam_r), np.array(kpts_body)
+    # Convert lists to NumPy arrays (should now be consistent in shape)
+    kpts_cam_l = np.array(kpts_cam_l)
+    kpts_cam_r = np.array(kpts_cam_r)
+    kpts_body = np.array(kpts_body)
+
+    return kpts_cam_l, kpts_cam_r, kpts_body
 
 def select_folder_and_options():
     """
@@ -350,7 +356,7 @@ if __name__ == '__main__':
         if save_images and save_video:
             os.makedirs(outdir_video_trial, exist_ok=True)
             for cam in range(ncams):
-                imagefolder = os.path.join(outdir_images_trial, f'/cam{cam}')
+                imagefolder = os.path.join(outdir_images_trial, f'cam{cam}')
                 createvideo(image_folder=imagefolder, extension='.png', fs=60,
                             output_folder=os.path.join(outdir_video_trial, trialname), video_name=f'cam{cam}.mp4')
 
