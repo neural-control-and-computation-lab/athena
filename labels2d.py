@@ -474,18 +474,17 @@ if __name__ == '__main__':
             for cam in range(ncams):
                 os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
 
-        kpts_caml, kpts_camr, kpts_cambody = run_mediapipe(vidnames, save_images=save_images,
-                                                           monitor_images=monitor_images,
-                                                           use_gpu=use_gpu,
-                                                           process_to_frame=slider_value)
+        kpts_cam_l, kpts_cam_r, kpts_body, kpts_cam_l_world, kpts_cam_r_world, kpts_body_world, confidence_hand = (
+            run_mediapipe(vidnames, save_images=save_images, monitor_images=monitor_images, use_gpu=use_gpu,
+                          process_to_frame=slider_value))
 
-        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_left'), kpts_caml)
-        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_right'), kpts_camr)
-        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_body'), kpts_cambody)
-        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_left'), kpts_caml_world)
-        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_right'), kpts_camr_world)
-        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_body'), kpts_cambody_world)
-        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_handedness_score'), handscore)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_left'), kpts_cam_l)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_right'), kpts_cam_r)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_body'), kpts_body)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_left'), kpts_cam_l_world)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_right'), kpts_cam_r_world)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_body'), kpts_body_world)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_handedness_score'), confidence_hand)
 
         if save_images and save_video:
             os.makedirs(outdir_video_trial, exist_ok=True)
