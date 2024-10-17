@@ -48,6 +48,7 @@ def createvideo(image_folder, extension, fs, output_folder, video_name):
     video.release()
     cv.destroyAllWindows()
 
+
 def draw_pose_landmarks_on_image(rgb_image, detection_result):
     pose_landmarks_list = detection_result.pose_landmarks
     annotated_image = np.copy(rgb_image)
@@ -67,6 +68,7 @@ def draw_pose_landmarks_on_image(rgb_image, detection_result):
           solutions.pose.POSE_CONNECTIONS,
           solutions.drawing_styles.get_default_pose_landmarks_style())
     return annotated_image
+
 
 def draw_hand_landmarks_on_image(rgb_image, detection_result):
     MARGIN = 10  # pixels
@@ -109,6 +111,7 @@ def draw_hand_landmarks_on_image(rgb_image, detection_result):
 
     return annotated_image
 
+
 def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gpu=True, display_width=450, display_height=360):
     # Load HandLandmarker and PoseLandmarker models
     hand_model_path = 'hand_landmarker.task'
@@ -140,8 +143,13 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
     kpts_cam_r = [[] for _ in caps]
     kpts_body = [[] for _ in caps]
 
+    # Containers for detected keypoints (world coordinates) for each camera
+    kpts_cam_l_world = [[] for _ in caps]
+    kpts_cam_r_world = [[] for _ in caps]
+    kpts_body_world = [[] for _ in caps]
+
     # Containers for handedness confidence scores
-    confidence_hand = [[] for _ in caps]
+    handscore = [[] for _ in caps]
 
     # Define expected lengths
     num_hand_keypoints = 21
@@ -170,23 +178,39 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
             frame_keypoints_l = []
             frame_keypoints_r = []
             frame_keypoints_body = []
-            frame_confidence = [-1, -1]  # Default -1 (not detected)
+            frame_keypoints_l_world = []
+            frame_keypoints_r_world = []
+            frame_keypoints_body_world = []
+            frame_handscore = [-1, -1]  # Default -1 (not detected)
 
             if hand_results.hand_landmarks:
 
                 # Iterate over all detected hands
-                for hand_landmarks, handedness_list in zip(hand_results.hand_landmarks, hand_results.handedness):
+                for hand_landmarks, hand_world_landmarks, handedness_list in zip(hand_results.hand_landmarks, hand_results.hand_world_landmarks, hand_results.handedness):
                     handedness = handedness_list[0]
 
                     # Loop over each hand landmark (21 landmarks per hand)
                     if handedness.category_name == 'Left':  # Check if the hand is labeled as 'Left'
                         frame_keypoints_l = [[int(frame.shape[1] * hand_landmark.x),
-                                              int(frame.shape[0] * hand_landmark.y)] for hand_landmark in hand_landmarks]
-                        frame_confidence[0] = handedness.score
+                                              int(frame.shape[0] * hand_landmark.y),
+                                              hand_landmark.z,
+                                              hand_landmark.visibility, hand_landmark.presence] for hand_landmark in hand_landmarks]
+                        frame_keypoints_l_world = [[int(frame.shape[1] * hand_landmark.x),
+                                                    int(frame.shape[0] * hand_landmark.y),
+                                                    hand_landmark.z,
+                                                    hand_landmark.visibility, hand_landmark.presence] for hand_landmark in hand_world_landmarks]
+                        frame_handscore[0] = handedness.score
+
                     else:  # Right hand
                         frame_keypoints_r = [[int(frame.shape[1] * hand_landmark.x),
-                                              int(frame.shape[0] * hand_landmark.y)] for hand_landmark in hand_landmarks]
-                        frame_confidence[1] = handedness.score
+                                              int(frame.shape[0] * hand_landmark.y),
+                                              hand_landmark.z,
+                                              hand_landmark.visibility, hand_landmark.presence] for hand_landmark in hand_landmarks]
+                        frame_keypoints_r_world = [[int(frame.shape[1] * hand_landmark.x),
+                                                    int(frame.shape[0] * hand_landmark.y),
+                                                    hand_landmark.z,
+                                                    hand_landmark.visibility, hand_landmark.presence] for hand_landmark in hand_world_landmarks]
+                        frame_handscore[1] = handedness.score
 
                     # Draw hand landmarks on the image
                     frame = draw_hand_landmarks_on_image(frame, hand_results)
@@ -196,35 +220,48 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
 
             if pose_results.pose_landmarks:
                 # Iterate through each pose in the list (even if it's a single pose)
-                for pose_landmarks in pose_results.pose_landmarks:
+                for pose_landmarks, pose_world_landmarks in zip(pose_results.pose_landmarks, pose_results.pose_world_landmarks):
                     if hasattr(pose_landmarks, 'landmark'):
-                        frame_keypoints_body = [[int(round(body_landmark.x * frame.shape[1])),
-                                                 int(round(body_landmark.y * frame.shape[0]))] for body_landmark in pose_landmarks.landmark]
+                        frame_keypoints_body = [[int(body_landmark.x * frame.shape[1]),
+                                                 int(body_landmark.y * frame.shape[0]),
+                                                 body_landmark.z,
+                                                 body_landmark.visibility, body_landmark.presence] for body_landmark in pose_landmarks.landmark]
+                        frame_keypoints_body_world = [[int(body_landmark.x * frame.shape[1]),
+                                                       int(body_landmark.y * frame.shape[0]),
+                                                       body_landmark.z,
+                                                       body_landmark.visibility, body_landmark.presence] for body_landmark in pose_world_landmarks.landmark]
 
                     # Draw pose landmarks on the image
                     frame = draw_pose_landmarks_on_image(frame, pose_results)
 
             # Ensure each list has the correct number of keypoints by padding
             if len(frame_keypoints_l) < num_hand_keypoints:
-                frame_keypoints_l += [[-1, -1]] * (num_hand_keypoints - len(frame_keypoints_l))
+                frame_keypoints_l += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_l))
+                frame_keypoints_l_world += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_l_world))
             if len(frame_keypoints_r) < num_hand_keypoints:
-                frame_keypoints_r += [[-1, -1]] * (num_hand_keypoints - len(frame_keypoints_r))
+                frame_keypoints_r += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_r))
+                frame_keypoints_r_world += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_r_world))
             if len(frame_keypoints_body) < num_body_keypoints:
-                frame_keypoints_body += [[-1, -1]] * (num_body_keypoints - len(frame_keypoints_body))
+                frame_keypoints_body += [[-1, -1, -1, -1, -1]] * (num_body_keypoints - len(frame_keypoints_body))
+                frame_keypoints_body_world += [[-1, -1, -1, -1, -1]] * (num_body_keypoints - len(frame_keypoints_body_world))
 
             # Append padded key points for each hand (left and right) and body
             kpts_cam_l[cam].append(frame_keypoints_l)
             kpts_cam_r[cam].append(frame_keypoints_r)
             kpts_body[cam].append(frame_keypoints_body)
+            kpts_cam_l_world[cam].append(frame_keypoints_l_world)
+            kpts_cam_r_world[cam].append(frame_keypoints_r_world)
+            kpts_body_world[cam].append(frame_keypoints_body_world)
 
             # Handedness confidence
-            confidence_hand[cam].append(frame_confidence)
+            handscore[cam].append(frame_handscore)
 
             # Resize the frame
             resized_frame = cv.resize(frame, (display_width, display_height))
 
             # display if monitoring
             if monitor_images:
+
                 # Set a grid layout for displaying each camera feed
                 window_x = (cam % 4) * (display_width + 2)  # Adjust for 4 columns
                 window_y = (cam // 4) * (display_height + 29)  # Adjust row position
@@ -256,12 +293,16 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
         pose_landmarker.close()
 
     # Convert lists to NumPy arrays (should now be consistent in shape)
-    kpts_cam_l = np.array(kpts_cam_l)
+    kpts_cam_l = np.array(kpts_cam_l)  # ncams x nframes x 21 landmarks x 5 outputs (xyz, presence, visibility)
     kpts_cam_r = np.array(kpts_cam_r)
-    kpts_body = np.array(kpts_body)
-    confidence_hand = np.array(confidence_hand)  # ncams x nframes x 2 hands
+    kpts_body = np.array(kpts_body)  # ncams x nframes x 33 landmarks x 5 outputs (xyz, presence, visibility)
+    kpts_cam_l_world = np.array(kpts_cam_l_world)
+    kpts_cam_r_world = np.array(kpts_cam_r_world)
+    kpts_body_world = np.array(kpts_body_world)
+    confidence_hand = np.array(handscore)  # ncams x nframes x 2 hands
 
-    return kpts_cam_l, kpts_cam_r, kpts_body, confidence_hand
+    return kpts_cam_l, kpts_cam_r, kpts_body, kpts_cam_l_world, kpts_cam_r_world, kpts_body_world, confidence_hand
+
 
 def select_folder_and_options():
     """
@@ -368,12 +409,16 @@ if __name__ == '__main__':
             for cam in range(ncams):
                 os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
 
-        kpts_caml, kpts_camr, kpts_cambody, handscore = run_mediapipe(vidnames, save_images=save_images,
-                                                                      monitor_images=monitor_images, use_gpu=use_gpu)
+        kpts_caml, kpts_camr, kpts_cambody, kpts_caml_world, kpts_camr_world, kpts_cambody_world, handscore = run_mediapipe(vidnames, save_images=save_images,
+                                                                                                                            monitor_images=monitor_images,
+                                                                                                                            use_gpu=use_gpu)
 
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_left'), kpts_caml)
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_right'), kpts_camr)
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_body'), kpts_cambody)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_left'), kpts_caml_world)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_right'), kpts_camr_world)
+        np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_body'), kpts_cambody_world)
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_handedness_score'), handscore)
 
         if save_images and save_video:
