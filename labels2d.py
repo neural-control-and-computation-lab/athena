@@ -112,7 +112,38 @@ def draw_hand_landmarks_on_image(rgb_image, detection_result):
     return annotated_image
 
 
+def readcalibration(calfilepathway):
+    """
+    Outputs camera calibration parameters.
+
+    :param calibrationfiles: Pathway containing camera calibration parameters within individual yaml files.
+    :return: Extrinsic, intrinsic and distortion coefficients.
+    """
+
+    extrinsics = []
+    intrinsics = []
+    dist_coeffs = []
+
+    for cam in range(len(calfilepathway)):
+
+        # Grab camera calibration parameters
+        cam_yaml = cv.FileStorage(calfilepathway[cam], cv.FILE_STORAGE_READ)
+        cam_int = cam_yaml.getNode("intrinsicMatrix").mat()
+        cam_dist = cam_yaml.getNode("distortionCoefficients").mat()
+        cam_rotn = cam_yaml.getNode("R").mat()
+        cam_transln = cam_yaml.getNode("T").mat()
+        cam_transform = transformationmatrix(cam_rotn, cam_transln)
+
+        # Store calibration parameters
+        extrinsics.append(cam_transform)
+        intrinsics.append(cam_int)
+        dist_coeffs.append(cam_dist.reshape(-1))
+
+    return extrinsics, intrinsics, dist_coeffs
+
+
 def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gpu=True, display_width=450, display_height=360):
+
     # Load HandLandmarker and PoseLandmarker models
     hand_model_path = 'hand_landmarker.task'
     pose_model_path = 'pose_landmarker_full.task'
@@ -165,6 +196,10 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
 
         # Process each frame for hand and pose landmarks
         for cam, (_, frame) in enumerate(frames):
+
+            # Undistort image
+            frame = cv.undistort(frame, cam_mats_intrinsic[cam].transpose(), cam_dist_coeffs[cam])
+
             # Convert frame from BGR to RGB as required by Mediapipe
             if use_gpu:
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGBA, data=cv.cvtColor(frame, cv.COLOR_BGR2RGBA))
@@ -371,6 +406,20 @@ def select_folder_and_options():
     root.mainloop()
 
 
+def transformationmatrix(R, t):
+    """
+    Create a 4x4 transformation matrix based on a rotation vector and translation vector.
+
+    :param R: 3x3 rotation matrix.
+    :param t: translation vector.
+    :return: 4x4 transformation matrix.
+    """
+
+    T = np.concatenate((R, t.reshape(3, 1)), axis=1)
+    T = np.vstack((T, [0, 0, 0, 1]))
+    return T
+
+
 if __name__ == '__main__':
     start = time.time()
     select_folder_and_options()
@@ -391,6 +440,10 @@ if __name__ == '__main__':
         if save_video and not save_images:
             print("Cannot save video without saving images. Adjusting settings.")
             save_video = False
+
+    # Gather camera calibration parameters
+    calfiles = glob.glob(idfolder + '/calibration/*.yaml')
+    cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
 
     for trial in tqdm(trialfolders):
         trialname = os.path.basename(trial)

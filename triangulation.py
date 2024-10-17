@@ -1,5 +1,4 @@
 # Libraries
-import cv2 as cv
 import glob
 from labels2d import createvideo
 import matplotlib.pyplot as plt
@@ -10,50 +9,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog
 from tqdm import tqdm
-
-
-def readcalibration(calfilepathway):
-    """
-    Outputs camera calibration parameters separate .yaml file.
-
-    :param calibrationfiles: Pathway containing all yaml files.
-    :return: Extrinsic, intrinsic and distortion coefficients.
-    """
-
-    extrinsics = []
-    intrinsics = []
-    dist_coeffs = []
-
-    for cam in range(len(calfilepathway)):
-
-        # Grab camera calibration parameters
-        cam_yaml = cv.FileStorage(calfilepathway[cam], cv.FILE_STORAGE_READ)
-        cam_int = cam_yaml.getNode("intrinsicMatrix").mat()
-        cam_dist = cam_yaml.getNode("distortionCoefficients").mat()
-        cam_rotn = cam_yaml.getNode("R").mat()
-        cam_transln = cam_yaml.getNode("T").mat()
-        cam_transform = transformationmatrix(cam_rotn, cam_transln)
-
-        # Store calibration parameters
-        extrinsics.append(cam_transform)
-        intrinsics.append(cam_int)
-        dist_coeffs.append(cam_dist.reshape(-1))
-
-    return extrinsics, intrinsics, dist_coeffs
-
-
-def transformationmatrix(R, t):
-    """
-    Create a 4x4 transformation matrix based on a rotation vector and translation vector.
-
-    :param R: 3x3 rotation matrix.
-    :param t: translation vector.
-    :return: 4x4 transformation matrix.
-    """
-
-    T = np.concatenate((R, t.reshape(3, 1)), axis=1)
-    T = np.vstack((T, [0, 0, 0, 1]))
-    return T
+from labels2d import readcalibration
 
 
 def triangulate_simple(points, camera_mats):
@@ -78,23 +34,6 @@ def triangulate_simple(points, camera_mats):
     p3d = vh[-1]
     p3d = p3d[:3] / p3d[3]
     return p3d
-
-
-def undistort_points(points, matrix, dist):
-    """
-    Undistorts 2D pixel points based on camera intrinsics and distortion coefficients.
-
-    Code from here: https://github.com/lambdaloop/aniposelib/blob/master/aniposelib/cameras.py
-
-    :param points: 2D pixel points of landmark locations.
-    :param matrix: Intrinsic camera parameters.
-    :param dist: Distortion coefficients.
-    :return: Undistorted 2D points of landmark locations.
-    """
-
-    points = points.reshape(-1, 1, 2)
-    out = cv.undistortPoints(points, matrix, dist)
-    return out
 
 
 def hex2bgr(hexcode):
@@ -237,22 +176,15 @@ if __name__ == '__main__':
             print('Number of cameras in calibration parameters does not match 2D data.')
             quit()
 
-        # Undistort 2D points based on camera intrinsics and distortion coefficients
-        # Output is ncams x (nframes x nlandmarks) x 2-dimension
-        data_2d_undistort = np.empty(data_2d.shape)
-        for cam in range(ncams):
-            data_2d_undistort[cam] = undistort_points(data_2d[cam].astype(float), cam_mats_intrinsic[cam],
-                                                      cam_dist_coeffs[cam]).reshape(len(data_2d[cam]), 2)
-
         # Outputting 3D points
         # Code adapted from aniposelib: https://github.com/lambdaloop/aniposelib/blob/master/aniposelib/cameras.py
-        npoints = data_2d_undistort.shape[1]  # nframes x nlandmarks
+        npoints = data_2d.shape[1]  # nframes x nlandmarks
         data3d = np.empty((npoints, 3))
         data3d[:] = np.nan
         print('Triangulating.')
         for point in range(npoints):
 
-            subp = data_2d_undistort[:, point, :]
+            subp = data_2d[:, point, :]
 
             # Check how many cameras picked up the landmark for the given frame
             good = ~np.isnan(subp[:, 0])
