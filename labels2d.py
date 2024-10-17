@@ -71,9 +71,9 @@ def draw_pose_landmarks_on_image(rgb_image, detection_result):
 
 
 def draw_hand_landmarks_on_image(rgb_image, detection_result):
-    MARGIN = 10  # pixels
-    FONT_SIZE = 1
-    FONT_THICKNESS = 1
+    MARGIN = 20  # pixels
+    FONT_SIZE = 3
+    FONT_THICKNESS = 2
     HANDEDNESS_TEXT_COLOR = (88, 205, 54)  # vibrant green
 
     hand_landmarks_list = detection_result.hand_landmarks
@@ -141,9 +141,8 @@ def readcalibration(calfilepathway):
 
     return extrinsics, intrinsics, dist_coeffs
 
-
-def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gpu=True, display_width=450, display_height=360):
-
+def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gpu=True,
+                  display_width=450, display_height=360, process_to_frame=np.Inf):
     # Load HandLandmarker and PoseLandmarker models
     hand_model_path = 'hand_landmarker.task'
     pose_model_path = 'pose_landmarker_full.task'
@@ -164,6 +163,7 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
     # Create a list of cameras based on input_streams
     caps = [cv.VideoCapture(stream) for stream in input_streams]
     fps = caps[0].get(cv.CAP_PROP_FPS)  # Assume all streams have the same frame rate
+    total_frames = int(caps[0].get(cv.CAP_PROP_FRAME_COUNT))
 
     # Initialize HandLandmarker and PoseLandmarker for each camera
     hand_landmarkers = [HandLandmarker.create_from_options(hand_options) for _ in caps]
@@ -189,7 +189,7 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
     # Initialize frame number for each camera
     framenums = [0] * len(caps)
 
-    while True:
+    while framenums[0] <= int(process_to_frame*total_frames):
         frames = [cap.read() for cap in caps]
         if not all(ret for ret, _ in frames):
             break
@@ -341,14 +341,16 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
 
 def select_folder_and_options():
     """
-    Create GUI to select folder and set options for saving images/videos and monitoring.
+    Create GUI to select folder, set options for saving images/videos, monitoring,
+    and add a slider for selecting a value between 0 and 1.
     """
     def on_submit():
-        global save_images, save_video, monitor_images, use_gpu, idfolder
+        global save_images, save_video, monitor_images, use_gpu, slider_value, idfolder
         save_images = var_save_images.get()
         save_video = var_save_video.get()
         monitor_images = var_monitor_images.get()
-        use_gpu = var_use_gpu.get()  # Get the state of the GPU checkbox
+        use_gpu = var_use_gpu.get()
+        slider_value = slider.get()  # Get the value from the slider
         if not idfolder:
             messagebox.showerror("Error", "No folder selected!")
         else:
@@ -360,7 +362,7 @@ def select_folder_and_options():
 
     # Set window size and center it on the screen
     window_width = 500
-    window_height = 200
+    window_height = 300  # Increased height to accommodate the slider
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
     position_x = int((screen_width / 2) - (window_width / 2))
@@ -396,12 +398,22 @@ def select_folder_and_options():
     chk_monitor_images.grid(row=1, column=2, padx=10, pady=5)
 
     # Add a checkbox for GPU processing
-    chk_use_gpu = tk.Checkbutton(root, text="Use GPU Processing", variable=var_use_gpu)
-    chk_use_gpu.grid(row=2, column=0, padx=10, pady=5)
+    chk_use_gpu = tk.Checkbutton(root, text="GPU Processing", variable=var_use_gpu)
+    chk_use_gpu.grid(row=2, column=1, padx=10, pady=5)
+
+    # Add a slider to select values between 0 and 1
+    slider = tk.Scale(root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
+                      label="Fraction of recordings to process")
+    slider.grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky="ew")  # Make the slider span the full width
+    slider.set(1.0)  # Set default slider value to 1.0
 
     # Submit button
     btn_submit = tk.Button(root, text="GO", command=on_submit)
-    btn_submit.grid(row=3, column=1, padx=10, pady=20)
+    btn_submit.grid(row=4, column=1, padx=10, pady=20)
+
+    root.grid_columnconfigure(0, weight=1)  # Make the first column expandable
+    root.grid_columnconfigure(1, weight=1)  # Make the second column expandable
+    root.grid_columnconfigure(2, weight=1)  # Make the third column expandable
 
     root.mainloop()
 
@@ -462,9 +474,10 @@ if __name__ == '__main__':
             for cam in range(ncams):
                 os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
 
-        kpts_caml, kpts_camr, kpts_cambody, kpts_caml_world, kpts_camr_world, kpts_cambody_world, handscore = run_mediapipe(vidnames, save_images=save_images,
-                                                                                                                            monitor_images=monitor_images,
-                                                                                                                            use_gpu=use_gpu)
+        kpts_caml, kpts_camr, kpts_cambody = run_mediapipe(vidnames, save_images=save_images,
+                                                           monitor_images=monitor_images,
+                                                           use_gpu=use_gpu,
+                                                           process_to_frame=slider_value)
 
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_left'), kpts_caml)
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_right'), kpts_camr)
