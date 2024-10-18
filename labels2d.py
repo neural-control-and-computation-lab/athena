@@ -142,8 +142,16 @@ def readcalibration(calfilepathway):
 
     return extrinsics, intrinsics, dist_coeffs
 
-def run_mediapipe(input_streams, root, fps_label, progress_bar, save_images=False, monitor_images=False, use_gpu=True,
-                  display_width=450, display_height=360, process_to_frame=np.Inf):
+
+def run_mediapipe(input_streams, gui_options, display_width=450, display_height=360):
+    # Extract options from the gui_options dictionary
+    save_images = gui_options['save_images']
+    monitor_images = gui_options['monitor_images']
+    use_gpu = gui_options['use_gpu']
+    process_to_frame = gui_options['slider_value']
+    fps_label = gui_options['fps_label']  # Get the FPS label from the dictionary
+    progress_bar = gui_options['progress_bar']  # Get the progress bar from the dictionary
+
     # Load HandLandmarker and PoseLandmarker models
     hand_model_path = 'hand_landmarker.task'
     pose_model_path = 'pose_landmarker_full.task'
@@ -310,8 +318,8 @@ def run_mediapipe(input_streams, root, fps_label, progress_bar, save_images=Fals
                 progress_bar["value"] = progress_value
 
                 # Force the GUI to update (but only periodically)
-                root.update_idletasks()  # Update the FPS label and progress bar
-                root.update()  # Allow the GUI to process events
+                gui_options['root'].update_idletasks()  # Update the FPS label and progress bar
+                gui_options['root'].update()  # Allow the GUI to process events
 
             # Resize the frame
             resized_frame = cv.resize(frame, (display_width, display_height))
@@ -360,19 +368,24 @@ def run_mediapipe(input_streams, root, fps_label, progress_bar, save_images=Fals
 
     return kpts_cam_l, kpts_cam_r, kpts_body, kpts_cam_l_world, kpts_cam_r_world, kpts_body_world, confidence_hand
 
+
 def select_folder_and_options():
     """
     Create GUI to select folder, set options for saving images/videos, monitoring,
     and add a slider for selecting a value between 0 and 1, along with FPS display and progress bar.
     """
     def on_submit():
-        global save_images, save_video, monitor_images, use_gpu, slider_value, idfolder
-        save_images = var_save_images.get()
-        save_video = var_save_video.get()
-        monitor_images = var_monitor_images.get()
-        use_gpu = var_use_gpu.get()
-        slider_value = slider.get()  # Get the value from the slider
-        if not idfolder:
+        # Store all GUI options in a dictionary
+        gui_options['save_images'] = var_save_images.get()
+        gui_options['save_video'] = var_save_video.get()
+        gui_options['monitor_images'] = var_monitor_images.get()
+        gui_options['use_gpu'] = var_use_gpu.get()
+        gui_options['slider_value'] = slider.get()  # Get the value from the slider
+        gui_options['idfolder'] = idfolder
+        gui_options['fps_label'] = fps_label  # Add FPS label to the dictionary
+        gui_options['progress_bar'] = progress_bar  # Add progress bar to the dictionary
+        gui_options['root'] = root
+        if not gui_options['idfolder']:
             messagebox.showerror("Error", "No folder selected!")
         else:
             root.quit()  # Close the window
@@ -381,9 +394,12 @@ def select_folder_and_options():
     root = tk.Tk()
     root.title("Options for Processing")
 
+    # Initialize a dictionary to hold the GUI options
+    gui_options = {}
+
     # Set window size and center it on the screen
     window_width = 500
-    window_height = 400  # Increased height to accommodate the slider, FPS label, and progress bar
+    window_height = 400
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
     position_x = int((screen_width / 2) - (window_width / 2))
@@ -392,7 +408,7 @@ def select_folder_and_options():
 
     # Select folder button and folder label
     def select_folder():
-        global idfolder
+        nonlocal idfolder
         idfolder = filedialog.askdirectory(initialdir=str(Path(os.getcwd())))
         folder_label.config(text="Folder: " + idfolder)
 
@@ -407,7 +423,7 @@ def select_folder_and_options():
     var_save_images = tk.BooleanVar(value=False)
     var_save_video = tk.BooleanVar(value=False)
     var_monitor_images = tk.BooleanVar(value=False)
-    var_use_gpu = tk.BooleanVar(value=True)  # Default to using GPU
+    var_use_gpu = tk.BooleanVar(value=True)
 
     chk_save_images = tk.Checkbutton(root, text="Save Images", variable=var_save_images)
     chk_save_images.grid(row=1, column=0, padx=10, pady=5)
@@ -418,41 +434,35 @@ def select_folder_and_options():
     chk_monitor_images = tk.Checkbutton(root, text="Monitor Images", variable=var_monitor_images)
     chk_monitor_images.grid(row=1, column=2, padx=10, pady=5)
 
-    # Add a checkbox for GPU processing
     chk_use_gpu = tk.Checkbutton(root, text="GPU Processing", variable=var_use_gpu)
     chk_use_gpu.grid(row=2, column=1, padx=10, pady=5)
 
-    # Add a slider to select values between 0 and 1
     slider = tk.Scale(root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
                       label="Fraction of recordings to process")
-    slider.grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky="ew")  # Make the slider span the full width
-    slider.set(1.0)  # Set default slider value to 1.0
+    slider.grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
+    slider.set(1.0)
 
-    # Progress bar label
     progress_label = tk.Label(root, text="Progress:")
     progress_label.grid(row=5, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
 
-    # Progress Bar
     progress_bar = ttk.Progressbar(root, orient="horizontal", mode="determinate", style="TProgressbar")
     progress_bar.grid(row=6, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
-    progress_bar["value"] = 0  # Initialize to 0%
-    progress_bar["maximum"] = 100  # Set max to 100%
+    progress_bar["value"] = 0
+    progress_bar["maximum"] = 100
 
-    # FPS Label
     fps_label = tk.Label(root, text="FPS: 0")
     fps_label.grid(row=7, column=1, padx=10, pady=5)
 
-    # Submit button
     btn_submit = tk.Button(root, text="GO", command=on_submit)
     btn_submit.grid(row=4, column=1, padx=10, pady=20)
 
-    root.grid_columnconfigure(0, weight=1)  # Make the first column expandable
-    root.grid_columnconfigure(1, weight=1)  # Make the second column expandable
-    root.grid_columnconfigure(2, weight=1)  # Make the third column expandable
+    root.grid_columnconfigure(0, weight=1)
+    root.grid_columnconfigure(1, weight=1)
+    root.grid_columnconfigure(2, weight=1)
 
     root.mainloop()
 
-    return root, fps_label, progress_bar  # Return FPS label and progress bar
+    return gui_options
 
 
 def transformationmatrix(R, t):
@@ -471,7 +481,9 @@ def transformationmatrix(R, t):
 
 if __name__ == '__main__':
     start = time.time()
-    root, fps_label, progress_bar = select_folder_and_options()
+
+    gui_options = select_folder_and_options()
+    idfolder = gui_options['idfolder']
 
     if idfolder:
         id = os.path.basename(os.path.normpath(idfolder))
@@ -482,11 +494,11 @@ if __name__ == '__main__':
         outdir_data2d = os.path.join(idfolder, 'landmarks/')
 
         print(f"Selected Folder: {idfolder}")
-        print(f"Save Images: {save_images}")
-        print(f"Save Video: {save_video}")
-        print(f"Use GPU: {use_gpu}")
+        print(f"Save Images: {gui_options['save_images']}")
+        print(f"Save Video: {gui_options['save_video']}")
+        print(f"Use GPU: {gui_options['use_gpu']}")
 
-        if save_video and not save_images:
+        if gui_options['save_video'] and not gui_options['save_images']:
             print("Cannot save video without saving images. Adjusting settings.")
             save_video = False
 
@@ -505,16 +517,14 @@ if __name__ == '__main__':
         outdir_video_trial = os.path.join(outdir_video, trialname)
         outdir_data2d_trial = os.path.join(outdir_data2d, trialname)
 
-        if save_images:
+        if gui_options['save_images']:
             os.makedirs(outdir_images_trial, exist_ok=True)
             os.makedirs(outdir_data2d_trial, exist_ok=True)
             for cam in range(ncams):
                 os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
 
         kpts_cam_l, kpts_cam_r, kpts_body, kpts_cam_l_world, kpts_cam_r_world, kpts_body_world, confidence_hand = (
-            run_mediapipe(vidnames, root, fps_label, progress_bar, save_images=save_images, monitor_images=monitor_images,
-                          use_gpu=use_gpu,
-                          process_to_frame=slider_value))
+            run_mediapipe(vidnames, gui_options))
 
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_left'), kpts_cam_l)
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_right'), kpts_cam_r)
@@ -524,7 +534,7 @@ if __name__ == '__main__':
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_body'), kpts_body_world)
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_handedness_score'), confidence_hand)
 
-        if save_images and save_video:
+        if gui_options['save_images'] and gui_options['save_video']:
             os.makedirs(outdir_video_trial, exist_ok=True)
             for cam in range(ncams):
                 imagefolder = os.path.join(outdir_images_trial, f'cam{cam}')
