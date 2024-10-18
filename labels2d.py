@@ -9,6 +9,7 @@ import time
 from tqdm import tqdm
 import tkinter as tk
 from tkinter import filedialog, messagebox
+import tkinter.ttk as ttk  # For the progress bar
 from mediapipe import solutions
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks.python import vision
@@ -141,7 +142,7 @@ def readcalibration(calfilepathway):
 
     return extrinsics, intrinsics, dist_coeffs
 
-def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gpu=True,
+def run_mediapipe(input_streams, root, fps_label, progress_bar, save_images=False, monitor_images=False, use_gpu=True,
                   display_width=450, display_height=360, process_to_frame=np.Inf):
     # Load HandLandmarker and PoseLandmarker models
     hand_model_path = 'hand_landmarker.task'
@@ -189,6 +190,12 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
     # Initialize frame number for each camera
     framenums = [0] * len(caps)
 
+    # Initialize a counter for forced updates
+    frame_counter = 0
+
+    # Track start time for FPS calculation
+    start_time = time.time()
+
     while framenums[0] <= int(process_to_frame*total_frames):
         frames = [cap.read() for cap in caps]
         if not all(ret for ret, _ in frames):
@@ -219,7 +226,6 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
             frame_handscore = [-1, -1]  # Default -1 (not detected)
 
             if hand_results.hand_landmarks:
-
                 # Iterate over all detected hands
                 for hand_landmarks, hand_world_landmarks, handedness_list in zip(hand_results.hand_landmarks, hand_results.hand_world_landmarks, hand_results.handedness):
                     handedness = handedness_list[0]
@@ -290,6 +296,23 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
             # Handedness confidence
             handscore[cam].append(frame_handscore)
 
+            frame_counter += 1  # Increment the frame counter
+            # Only update FPS label and progress bar every 10 frames
+            if frame_counter % 10 == 0:
+                # FPS calculation
+                elapsed_time = time.time() - start_time
+                fps_value = framenums[0] / elapsed_time if elapsed_time > 0 else 0
+                fps_value = fps_value * len(caps)  # Multiply by number of cameras to get true FPS
+                fps_label.config(text=f"FPS: {fps_value:.2f}")  # Update the FPS label
+
+                # Update progress bar
+                progress_value = (framenums[0] / int(process_to_frame*total_frames)) * 100
+                progress_bar["value"] = progress_value
+
+                # Force the GUI to update (but only periodically)
+                root.update_idletasks()  # Update the FPS label and progress bar
+                root.update()  # Allow the GUI to process events
+
             # Resize the frame
             resized_frame = cv.resize(frame, (display_width, display_height))
 
@@ -337,11 +360,10 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
 
     return kpts_cam_l, kpts_cam_r, kpts_body, kpts_cam_l_world, kpts_cam_r_world, kpts_body_world, confidence_hand
 
-
 def select_folder_and_options():
     """
     Create GUI to select folder, set options for saving images/videos, monitoring,
-    and add a slider for selecting a value between 0 and 1.
+    and add a slider for selecting a value between 0 and 1, along with FPS display and progress bar.
     """
     def on_submit():
         global save_images, save_video, monitor_images, use_gpu, slider_value, idfolder
@@ -361,7 +383,7 @@ def select_folder_and_options():
 
     # Set window size and center it on the screen
     window_width = 500
-    window_height = 300  # Increased height to accommodate the slider
+    window_height = 400  # Increased height to accommodate the slider, FPS label, and progress bar
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
     position_x = int((screen_width / 2) - (window_width / 2))
@@ -406,6 +428,20 @@ def select_folder_and_options():
     slider.grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky="ew")  # Make the slider span the full width
     slider.set(1.0)  # Set default slider value to 1.0
 
+    # Progress bar label
+    progress_label = tk.Label(root, text="Progress:")
+    progress_label.grid(row=5, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
+
+    # Progress Bar
+    progress_bar = ttk.Progressbar(root, orient="horizontal", mode="determinate", style="TProgressbar")
+    progress_bar.grid(row=6, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
+    progress_bar["value"] = 0  # Initialize to 0%
+    progress_bar["maximum"] = 100  # Set max to 100%
+
+    # FPS Label
+    fps_label = tk.Label(root, text="FPS: 0")
+    fps_label.grid(row=7, column=1, padx=10, pady=5)
+
     # Submit button
     btn_submit = tk.Button(root, text="GO", command=on_submit)
     btn_submit.grid(row=4, column=1, padx=10, pady=20)
@@ -415,6 +451,8 @@ def select_folder_and_options():
     root.grid_columnconfigure(2, weight=1)  # Make the third column expandable
 
     root.mainloop()
+
+    return root, fps_label, progress_bar  # Return FPS label and progress bar
 
 
 def transformationmatrix(R, t):
@@ -433,7 +471,7 @@ def transformationmatrix(R, t):
 
 if __name__ == '__main__':
     start = time.time()
-    select_folder_and_options()
+    root, fps_label, progress_bar = select_folder_and_options()
 
     if idfolder:
         id = os.path.basename(os.path.normpath(idfolder))
@@ -474,7 +512,8 @@ if __name__ == '__main__':
                 os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
 
         kpts_cam_l, kpts_cam_r, kpts_body, kpts_cam_l_world, kpts_cam_r_world, kpts_body_world, confidence_hand = (
-            run_mediapipe(vidnames, save_images=save_images, monitor_images=monitor_images, use_gpu=use_gpu,
+            run_mediapipe(vidnames, root, fps_label, progress_bar, save_images=save_images, monitor_images=monitor_images,
+                          use_gpu=use_gpu,
                           process_to_frame=slider_value))
 
         np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_left'), kpts_cam_l)
