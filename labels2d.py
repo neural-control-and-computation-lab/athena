@@ -256,15 +256,14 @@ def run_mediapipe(input_streams, save_images=False, monitor_images=False, use_gp
             if pose_results.pose_landmarks:
                 # Iterate through each pose in the list (even if it's a single pose)
                 for pose_landmarks, pose_world_landmarks in zip(pose_results.pose_landmarks, pose_results.pose_world_landmarks):
-                    if hasattr(pose_landmarks, 'landmark'):
-                        frame_keypoints_body = [[int(body_landmark.x * frame.shape[1]),
-                                                 int(body_landmark.y * frame.shape[0]),
-                                                 body_landmark.z,
-                                                 body_landmark.visibility, body_landmark.presence] for body_landmark in pose_landmarks.landmark]
-                        frame_keypoints_body_world = [[int(body_landmark.x * frame.shape[1]),
-                                                       int(body_landmark.y * frame.shape[0]),
-                                                       body_landmark.z,
-                                                       body_landmark.visibility, body_landmark.presence] for body_landmark in pose_world_landmarks.landmark]
+                    frame_keypoints_body = [[int(body_landmark.x * frame.shape[1]),
+                                             int(body_landmark.y * frame.shape[0]),
+                                             body_landmark.z,
+                                             body_landmark.visibility, body_landmark.presence] for body_landmark in pose_landmarks]
+                    frame_keypoints_body_world = [[int(body_landmark.x * frame.shape[1]),
+                                                   int(body_landmark.y * frame.shape[0]),
+                                                   body_landmark.z,
+                                                   body_landmark.visibility, body_landmark.presence] for body_landmark in pose_world_landmarks]
 
                     # Draw pose landmarks on the image
                     frame = draw_pose_landmarks_on_image(frame, pose_results)
