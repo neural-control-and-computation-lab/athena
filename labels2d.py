@@ -136,8 +136,8 @@ def readcalibration(calfilepathway):
         cam_transform = transformationmatrix(cam_rotn, cam_transln)
 
         # Store calibration parameters
-        extrinsics.append(cam_transform)
-        intrinsics.append(cam_int)
+        extrinsics.append(cam_transform.transpose())
+        intrinsics.append(cam_int.transpose())
         dist_coeffs.append(cam_dist.reshape(-1))
 
     return extrinsics, intrinsics, dist_coeffs
@@ -213,7 +213,7 @@ def run_mediapipe(input_streams, gui_options, display_width=450, display_height=
         for cam, (_, frame) in enumerate(frames):
 
             # Undistort image
-            frame = cv.undistort(frame, cam_mats_intrinsic[cam].transpose(), cam_dist_coeffs[cam])
+            frame = cv.undistort(frame, cam_mats_intrinsic[cam], cam_dist_coeffs[cam])
 
             # Convert frame from BGR to RGB as required by Mediapipe
             if use_gpu:
