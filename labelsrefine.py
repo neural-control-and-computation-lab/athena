@@ -9,6 +9,8 @@ import time
 import tkinter as tk
 from tkinter import filedialog
 from tqdm import tqdm
+from labels2d import readcalibration
+from triangulation import triangulate_simple
 
 
 def hex2bgr(hexcode):
@@ -26,7 +28,141 @@ def hex2bgr(hexcode):
     return bgr
 
 
-def visualizelabels(input_streams, data):
+def undistort_points(points, matrix, dist):
+    points = points.reshape(-1, 1, 2)
+    out = cv.undistortPoints(points, matrix, dist)
+    return out
+
+
+def project_3d_to_2d(X_world, intrinsic_matrix, extrinsic_matrix):
+
+    # Transform 3D point to camera coordinates
+    X_camera = np.dot(extrinsic_matrix, X_world)
+
+    # Project onto the image plane using the intrinsic matrix
+    X_image_homogeneous = np.dot(intrinsic_matrix, X_camera[:3])  # Skip the homogeneous coordinate (4th value)
+
+    # Normalize the homogeneous coordinates to get 2D point
+    u = X_image_homogeneous[0] / X_image_homogeneous[2]
+    v = X_image_homogeneous[1] / X_image_homogeneous[2]
+
+    return np.array([u, v])
+
+
+def switch_hands(data2d):
+    data_2d_switched = data2d.copy()
+
+    # Step #1:
+    for cam in range(ncams):
+
+        rwrist = data2d[cam, :, 16, :]
+        lwrist = data2d[cam, :, 15, :]
+        rhand = data2d[cam, :, 33, :]
+        lhand = data2d[cam, :, 54, :]
+
+        norm_rvsr = np.linalg.norm(rwrist - rhand, axis=-1)
+        norm_rvsl = np.linalg.norm(rwrist - lhand, axis=-1)
+        norm_lvsr = np.linalg.norm(lwrist - rhand, axis=-1)
+        norm_lvsl = np.linalg.norm(lwrist - lhand, axis=-1)
+
+        # Condition where hands are switched and both hands present
+        condition1 = norm_rvsr > norm_rvsl
+        condition2 = rhand[:, 0] != -1
+        condition3 = lhand[:, 0] != -1
+
+        # Condition where left hand is mislabelled as right hand and only 1 hand present
+        condition4 = norm_lvsr < norm_rvsl
+        condition5 = lhand[:, 0] == -1
+        condition6 = norm_rvsr > norm_lvsr  # Need this to prevent where RH is only hand and correctly there
+        combined_condition = (condition1 & condition2 & condition3) | (condition4 & condition5 & condition6)
+
+        for i, flag in enumerate(combined_condition):
+            if flag:
+                temp = np.copy(data_2d_switched[cam, i, 33:54, :])
+                data_2d_switched[cam, i, 33:54, :] = data_2d_switched[cam, i, 54:75, :]
+                data_2d_switched[cam, i, 54:75, :] = temp
+
+    # Step #2: Output 3D points
+    data_2d = data_2d_switched.copy()
+    data_2d[data_2d == -1] = np.nan
+    data_2d = data_2d.reshape((ncams, -1, 2))
+    data_2d_undistort = np.empty(data_2d.shape)
+    for cam in range(ncams):
+        data_2d_undistort[cam] = undistort_points(data_2d[cam].astype(float), cam_mats_intrinsic[cam],
+                                                  cam_dist_coeffs[cam]).reshape(len(data_2d[cam]), 2)
+
+    lhand = np.empty((nframes, 3))
+    lhand[:] = np.nan
+    rhand = np.empty((nframes, 3))
+    rhand[:] = np.nan
+    data_2d_undistort = data_2d_undistort.reshape((ncams, nframes, nlandmarks, 2))
+    handestimate = np.empty((ncams, nframes, 2, 2))
+    handestimate[:] = np.nan
+
+    for frame in range(nframes):
+
+        # Identify cams where left hand and left wrist were tracked
+        sub_lh = data_2d_undistort[:, frame, 54, :]
+        good_lh = ~np.isnan(sub_lh[:, 0])
+        sub_lw = data_2d_undistort[:, frame, 15, :]
+        good_lw = ~np.isnan(sub_lw[:, 0])
+        good_lhlw = good_lh & good_lw
+
+        # Identify cams where right hand and right wrist were tracked
+        sub_rh = data_2d_undistort[:, frame, 33, :]
+        good_rh = ~np.isnan(sub_rh[:, 0])
+        sub_rw = data_2d_undistort[:, frame, 16, :]
+        good_rw = ~np.isnan(sub_rw[:, 0])
+        good_rhrw = good_rh & good_rw
+
+        # Require at least 2 cameras to have picked up both hand and wrist
+        if np.sum(good_lhlw) >= 2:
+            lhand[frame] = triangulate_simple(sub_lh[good_lhlw], cam_mats_extrinsic[good_lhlw])
+
+        if np.sum(good_rhrw) >= 2:
+            rhand[frame] = triangulate_simple(sub_rh[good_rhrw], cam_mats_extrinsic[good_rhrw])
+
+        for cam in range(ncams):
+            lhand_world = np.append(lhand[frame], 1)
+            rhand_world = np.append(rhand[frame], 1)
+            handestimate[cam, frame, 0, :] = project_3d_to_2d(rhand_world, cam_mats_intrinsic[cam],
+                                                              cam_mats_extrinsic[cam])
+            handestimate[cam, frame, 1, :] = project_3d_to_2d(lhand_world, cam_mats_intrinsic[cam],
+                                                              cam_mats_extrinsic[cam])
+
+    # Step 3
+    data_2d_switched[data_2d_switched == -1] = -9999
+    for cam in range(ncams):
+
+        rhand = data_2d_switched[cam, :, 33, :]
+        lhand = data_2d_switched[cam, :, 54, :]
+        rhand_est = handestimate[cam, :, 0, :]
+        lhand_est = handestimate[cam, :, 1, :]
+
+        norm_rvsrest = np.linalg.norm(rhand - rhand_est, axis=-1)
+        norm_lvsrest = np.linalg.norm(lhand - rhand_est, axis=-1)
+        norm_rvslest = np.linalg.norm(rhand - lhand_est, axis=-1)
+        norm_lvslest = np.linalg.norm(lhand - lhand_est, axis=-1)
+
+        c1 = norm_lvsrest < norm_rvsrest
+        c2 = norm_lvsrest < norm_lvslest
+
+        c3 = norm_rvslest < norm_lvslest
+        c4 = norm_rvslest < norm_rvsrest
+
+        c5 = (c1 & c2) | (c3 & c4)
+
+        for i, flag in enumerate(c5):
+            if flag:
+                temp = np.copy(data_2d_switched[cam, i, 33:54, :])
+                data_2d_switched[cam, i, 33:54, :] = data_2d_switched[cam, i, 54:75, :]
+                data_2d_switched[cam, i, 54:75, :] = temp
+    data_2d_switched[data_2d_switched == -9999] = -1
+
+    return data_2d_switched
+
+
+def visualizelabels(input_streams, data, display_width=450, display_height=360):
     """
     Draws 2D hand landmarks on videos.
 
@@ -120,16 +256,18 @@ def visualizelabels(input_streams, data):
                 posn = (int(data[cam, framenum, landmark, 0]), int(data[cam, framenum, landmark, 1]))
                 cv.circle(frame, posn, 3, (0, 0, 0), thickness=1)
 
+            # Resize the frame
+            resized_frame = cv.resize(frame, (display_width, display_height))
+
             # Display and save images
-            # cv.imshow(f'cam{cam}', frame)
-            cv.imwrite(outdir_images_refined + trialname + '/cam' + str(cam) + '/' + 'frame' + f'{framenum:04d}' + '.png', frame)
+            # cv.imshow(f'cam{cam}', resized_frame)
+            cv.imwrite(outdir_images_refined + trialname + '/cam' + str(cam) + '/' + 'frame' + f'{framenum:04d}' + '.png', resized_frame)
 
         k = cv.waitKey(10)
         if k & 0xFF == 27:  # ESC key
             break
 
         # Increment frame number
-        print(framenum)
         framenum += 1
 
     # Clear windows
@@ -157,101 +295,56 @@ if __name__ == '__main__':
     visit = os.path.basename(os.path.normpath(idfolder))
     print(id + '; ' + visit)
 
-    # Gather 2D hand locations from all trials
-    trialdata_right = sorted(glob.glob(idfolder + '/landmarks/*2Dlandmarks_right.npy'))
-    trialdata_left = sorted(glob.glob(idfolder + '/landmarks/*2Dlandmarks_left.npy'))
-    trialdata_body = sorted(glob.glob(idfolder + '/landmarks/*2Dlandmarks_body.npy'))
+    # Identify trials
+    trials = sorted(glob.glob(idfolder + '/landmarks/*'))
+
+    # Gather camera calibration parameters
+    calfiles = glob.glob(idfolder + '/calibration/*.yaml')
+    cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
+    cam_mats_extrinsic = np.array(cam_mats_extrinsic)
+    ncams = len(calfiles)
 
     # Output directories
-    outdir_images = idfolder + '/images/'
     outdir_images_refined = idfolder + '/imagesrefined/'
     outdir_video = idfolder + '/videos_processed/'
     outdir_data2d = idfolder + '/landmarks/'
 
-    # Make output directories if they do not exist (landmarks folder should already exist)
-    if not os.path.exists(outdir_images):
-        os.mkdir(outdir_images)
-    if not os.path.exists(outdir_images_refined):
-        os.mkdir(outdir_images_refined)
-    if not os.path.exists(outdir_video):
-        os.mkdir(outdir_video)
+    # Make output directories
+    os.makedirs(outdir_images_refined, exist_ok=True)
+    os.makedirs(outdir_video, exist_ok=True)
 
-    for trialright, trialleft, trialbody in tqdm(zip(trialdata_right, trialdata_left, trialdata_body)):
+    for trial in tqdm(trials):
 
         # Identify trial name
-        filename = os.path.basename(trialright)
-        fileparts = filename.split('_2Dlandmarks_right.npy')
-        trialname = fileparts[0]
+        trialname = os.path.basename(trial)
         print(trialname)
 
-        # Load 2D hand location data
-        data_2d_right = np.load(trialright).astype(float)
-        data_2d_left = np.load(trialleft).astype(float)
-        data_2d_body = np.load(trialbody).astype(float)
-        data_2d_combined = np.concatenate((data_2d_body, data_2d_right, data_2d_left), axis=2)
+        # Load keypoint data
+        data_2d_right = np.load(glob.glob(trial + '/*2Dlandmarks_right.npy')[0]).astype(float)
+        data_2d_left = np.load(glob.glob(trial + '/*2Dlandmarks_left.npy')[0]).astype(float)
+        data_2d_body = np.load(glob.glob(trial + '/*2Dlandmarks_body.npy')[0]).astype(float)
 
-        # Number of cameras
-        ncams = np.shape(data_2d_right)[0]
+        # Isolate keypoint data
+        data_2d_combined = np.concatenate((data_2d_body[:, :, :, :2], data_2d_right[:, :, :, :2], data_2d_left[:, :, :, :2]), axis=2)
+
+        # Video parameters
+        nframes = data_2d_combined.shape[1]
+        nlandmarks = data_2d_combined.shape[2]
 
         # Output directories for the specific trial (for visualizations)
-        outdir_images_trialfolder = outdir_images_refined + str(trialname) + '/data3d/'
-        if not os.path.exists(outdir_images + str(trialname)):
-            os.mkdir(outdir_images + str(trialname))
-            for cam in range(ncams):
-                os.mkdir(outdir_images + trialname + '/cam' + str(cam))
-        if not os.path.exists(outdir_images_refined + str(trialname)):
-            os.mkdir(outdir_images_refined + str(trialname))
-            for cam in range(ncams):
-                os.mkdir(outdir_images_refined + trialname + '/cam' + str(cam))
-        if not os.path.exists(outdir_images_trialfolder):
-            os.mkdir(outdir_images_trialfolder)
-        outdir_video_trialfolder = outdir_video + str(trialname)
-        if not os.path.exists(outdir_video_trialfolder):
-            os.mkdir(outdir_video_trialfolder)
-
-        # Copy data to avoid overwriting issues
-        test = data_2d_combined.copy()
-
-        # Fix hand switching (temp - need to vectorize and make into function)
+        os.makedirs(outdir_images_refined + trialname, exist_ok=True)
+        os.makedirs(outdir_video + trialname, exist_ok=True)
         for cam in range(ncams):
-            rwrist = data_2d_combined[cam, :, 16, :]
-            lwrist = data_2d_combined[cam, :, 15, :]
-            rhand = data_2d_combined[cam, :, 33, :]
-            lhand = data_2d_combined[cam, :, 54, :]
-
-            norm_rvsr = np.linalg.norm(rwrist - rhand, axis=-1)
-            norm_rvsl = np.linalg.norm(rwrist - lhand, axis=-1)
-            norm_lvsr = np.linalg.norm(lwrist - rhand, axis=-1)
-            norm_lvsl = np.linalg.norm(lwrist - lhand, axis=-1)
-
-            # Missing frames
-            rhand_missing = np.where(rhand[:, 0] == -1, 0, 1)
-            lhand_missing = np.where(lhand[:, 0] == -1, 0, 1)
-
-            # Condition where hands are switched and both hands present
-            condition1 = norm_rvsr > norm_rvsl
-            condition2 = rhand[:, 0] != -1
-            condition3 = lhand[:, 0] != -1
-
-            # Condition where left hand is mislabelled as right hand and only 1 hand present
-            condition4 = norm_lvsr < norm_rvsl
-            condition5 = lhand[:, 0] == -1
-            condition6 = norm_rvsr > norm_lvsr  # Need this to prevent where RH is only hand and correctly there
-            combined_condition = (condition1 & condition2 & condition3) | (condition4 & condition5 & condition6)
-
-            for i, flag in enumerate(combined_condition):
-                if flag:
-                    temp = np.copy(test[cam, i, 33:54, :])
-                    test[cam, i, 33:54, :] = test[cam, i, 54:75, :]
-                    test[cam, i, 54:75, :] = temp
+            os.makedirs(outdir_images_refined + trialname + '/cam' + str(cam), exist_ok=True)
 
         # Save refined labels
-        np.save(outdir_data2d + trialname + '_2Dlandmarks', test)
+        data_2d_refined = switch_hands(data_2d_combined)
+        np.save(outdir_data2d + trialname + '/' + trialname + '_2Dlandmarksrefined', data_2d_refined)
 
         # Output visualizations
-        # Refined 2D labels (note, these are from the unsynced data, so cam frames may be 1-3 frames off)
+        # Refined 2D labels
         vidnames = sorted(glob.glob(idfolder + '/videos/' + trialname + '/*.avi'))
-        visualizelabels(vidnames, data=test)
+        visualizelabels(vidnames, data=data_2d_refined)
         for cam in range(ncams):
             imagefolder = outdir_images_refined + trialname + '/cam' + str(cam)
             print('Saving video.')
