@@ -131,12 +131,12 @@ def readcalibration(calfilepathway):
         cam_yaml = cv.FileStorage(calfilepathway[cam], cv.FILE_STORAGE_READ)
         cam_int = cam_yaml.getNode("intrinsicMatrix").mat()
         cam_dist = cam_yaml.getNode("distortionCoefficients").mat()
-        cam_rotn = cam_yaml.getNode("R").mat()
+        cam_rotn = cam_yaml.getNode("R").mat().transpose()
         cam_transln = cam_yaml.getNode("T").mat()
         cam_transform = transformationmatrix(cam_rotn, cam_transln)
 
         # Store calibration parameters
-        extrinsics.append(cam_transform.transpose())
+        extrinsics.append(cam_transform)
         intrinsics.append(cam_int.transpose())
         dist_coeffs.append(cam_dist.reshape(-1))
 
