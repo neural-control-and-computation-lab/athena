@@ -1,4 +1,5 @@
 # Libraries
+import cv2 as cv
 import glob
 from labels2d import createvideo
 import matplotlib.pyplot as plt
@@ -10,6 +11,12 @@ import tkinter as tk
 from tkinter import filedialog
 from tqdm import tqdm
 from labels2d import readcalibration
+
+
+def undistort_points(points, matrix, dist):
+    points = points.reshape(-1, 1, 2)
+    out = cv.undistortPoints(points, matrix, dist)
+    return out
 
 
 def triangulate_simple(points, camera_mats):
@@ -81,16 +88,17 @@ def visualize_3d(p3ds, save_path=None):
              [54, 63], [63, 64], [64, 65], [65, 66],
              [54, 67], [67, 68], [68, 69], [69, 70],
              [54, 71], [71, 72], [72, 73], [73, 74]]
-    nframes = np.shape(p3ds)[0]
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
 
+    # plt.ion()
+
     for framenum in range(nframes):
 
         # Skip frames
-        if framenum % 2 == 0:
-            continue
+        # if framenum % 2 == 0:
+        #     continue
 
         for linknum, link in enumerate(links):
             ax.plot(xs=[p3ds[framenum, link[0], 0], p3ds[framenum, link[1], 0]],
@@ -100,22 +108,21 @@ def visualize_3d(p3ds, save_path=None):
 
         for i in range(33, 75):
             ax.scatter(xs=p3ds[framenum, i:i + 1, 0], ys=p3ds[framenum, i:i + 1, 1], zs=p3ds[framenum, i:i + 1, 2],
-                       marker='o', s=40, lw=2, c='white', edgecolors='black', alpha=0.7)
+                       marker='o', s=10, lw=1, c='white', edgecolors='black', alpha=0.7)
 
         # Axis ticks
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_zticks([])
+        # ax.set_xticks([])
+        # ax.set_yticks([])
+        # ax.set_zticks([])
 
         # Axis limits and labels
-        ax.set_xlim3d([-1300, -300])
-        ax.set_ylim3d([-1500, -500])
-        ax.set_zlim3d([-2400, -1400])
+        ax.set_xlim3d([-400, 400])
+        ax.set_ylim3d([-400, 400])
+        ax.set_zlim3d([600, 1400])
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
-        ax.view_init(-67, -42)
-        ax.set_axis_off()
+        ax.view_init(-60, -50)
 
         if save_path is not None:
             plt.savefig(save_path.format(framenum), dpi=100)
@@ -148,26 +155,30 @@ if __name__ == '__main__':
     # Gather camera calibration parameters
     calfiles = glob.glob(idfolder + '/calibration/*.yaml')
     cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
+    cam_mats_extrinsic = np.array(cam_mats_extrinsic)
     ncams = len(calfiles)
 
     # Gather 2D data
-    trialdata = sorted(glob.glob(idfolder + '/landmarks/*2Dlandmarks.npy'))
+    trials = sorted(glob.glob(idfolder + '/landmarks/*'))
 
     # Output directories
     outdir_images_refined = idfolder + '/imagesrefined/'
     outdir_video = idfolder + '/videos_processed/'
     outdir_data3d = idfolder + '/landmarks/'
 
-    for trial in tqdm(trialdata):
+    # Make output directories
+    os.makedirs(outdir_images_refined, exist_ok=True)
+    os.makedirs(outdir_video, exist_ok=True)
+
+    for trial in tqdm(trials):
 
         # Identify trial name
-        filename = os.path.basename(trial)
-        fileparts = filename.split('_2Dlandmarks.npy')
-        trialname = fileparts[0]
+        trialname = os.path.basename(trial)
         print(trialname)
 
         # Load 2D hand location data and reshape
-        data_2d = np.load(trial).astype(float)
+        data_2d = np.load(glob.glob(trial + '/*2Dlandmarksrefined.npy')[0]).astype(float)
+        nframes = np.shape(data_2d)[1]
         nlandmarks = np.shape(data_2d)[2]
         data_2d = data_2d.reshape((ncams, -1, 2))
 
@@ -176,41 +187,53 @@ if __name__ == '__main__':
             print('Number of cameras in calibration parameters does not match 2D data.')
             quit()
 
+        # Replace missing data with nans
+        nancondition = (data_2d[:, :, 0] == -1) & (data_2d[:, :, 1] == -1)  # Replacing missing data with nans
+        data_2d[nancondition, :] = np.nan
+
+        # Undistort 2D points based on camera intrinsics and distortion coefficients
+        # Output is ncams x (nframes x nlandmarks) x 2-dimension
+        # As we already undistort image at beginning, I am using dist coefficients of [0, 0, 0, 0, 0]
+        # The undistort_points will help normalize the coordinates to the camera intrinsics
+        data_2d_undistort = np.empty(data_2d.shape)
+        for cam in range(ncams):
+            data_2d_undistort[cam] = undistort_points(data_2d[cam].astype(float), cam_mats_intrinsic[cam],
+                                                      np.array([0, 0, 0, 0, 0])).reshape(len(data_2d[cam]), 2)
+
         # Outputting 3D points
         # Code adapted from aniposelib: https://github.com/lambdaloop/aniposelib/blob/master/aniposelib/cameras.py
-        npoints = data_2d.shape[1]  # nframes x nlandmarks
+        npoints = data_2d_undistort.shape[1]  # nframes x nlandmarks
         data3d = np.empty((npoints, 3))
         data3d[:] = np.nan
         print('Triangulating.')
         for point in range(npoints):
 
-            subp = data_2d[:, point, :]
+            subp = data_2d_undistort[:, point, :]
 
             # Check how many cameras picked up the landmark for the given frame
             good = ~np.isnan(subp[:, 0])
 
             # Require at least 2 cameras to have picked up a landmark to triangulate, otherwise keep as nan
             if np.sum(good) >= 2:
-                data3d[point] = triangulate_simple(subp[good], np.array(cam_mats_extrinsic)[good])
+                data3d[point] = triangulate_simple(subp[good], cam_mats_extrinsic[good])
 
         # Reshaping to nframes x nlandmarks x 3-dimension
         data3d = data3d.reshape((int(len(data3d)/nlandmarks), nlandmarks, 3))
 
         # Save 3D landmarks as np array
-        np.save(outdir_data3d + trialname + '_3Dlandmarks', data3d)
+        np.save(outdir_data3d + trialname + '/' + trialname + '_3Dlandmarks', data3d)
 
         # Output directories for the specific trial (for visualizations)
         outdir_images_trialfolder = outdir_images_refined + str(trialname) + '/data3d/'
-        if not os.path.exists(outdir_images_trialfolder):
-            os.mkdir(outdir_images_trialfolder)
         outdir_video_trialfolder = outdir_video + str(trialname)
-        if not os.path.exists(outdir_video_trialfolder):
-            os.mkdir(outdir_video_trialfolder)
+        os.makedirs(outdir_images_trialfolder, exist_ok=True)
+        os.makedirs(outdir_video_trialfolder, exist_ok=True)
 
         # Output 3D visualizations
+        print('Saving images.')
+        # visualize_3d(data3d, save_path=outdir_images_trialfolder + 'frame_{:04d}.png')
         print('Saving video.')
-        visualize_3d(data3d, save_path=outdir_images_trialfolder + 'frame_{:04d}.png')
-        createvideo(image_folder=outdir_images_trialfolder, extension='.png', fs=30,
+        createvideo(image_folder=outdir_images_trialfolder, extension='.png', fs=60,
                     output_folder=outdir_video_trialfolder, video_name='data3d.mp4')
 
     # Counter

@@ -31,7 +31,7 @@ def createvideo(image_folder, extension, fs, output_folder, video_name):
         return
 
     # Sort the images based on their filenames (assuming they contain frame numbers)
-    images.sort(key=lambda img: int(img.split('frame')[-1].split('.')[0]))
+    images.sort()
 
     # Read the first image to get the frame dimensions
     frame = cv.imread(os.path.join(image_folder, images[0]))

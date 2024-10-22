@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import filedialog
 from tqdm import tqdm
 from labels2d import readcalibration
-from triangulation import triangulate_simple
+from triangulation import triangulate_simple, undistort_points
 
 
 def hex2bgr(hexcode):
@@ -26,12 +26,6 @@ def hex2bgr(hexcode):
     bgr = rgb[::-1]
 
     return bgr
-
-
-def undistort_points(points, matrix, dist):
-    points = points.reshape(-1, 1, 2)
-    out = cv.undistortPoints(points, matrix, dist)
-    return out
 
 
 def project_3d_to_2d(X_world, intrinsic_matrix, extrinsic_matrix):
