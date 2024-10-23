@@ -517,9 +517,9 @@ if __name__ == '__main__':
         outdir_video_trial = os.path.join(outdir_video, trialname)
         outdir_data2d_trial = os.path.join(outdir_data2d, trialname)
 
+        os.makedirs(outdir_data2d_trial, exist_ok=True)
         if gui_options['save_images']:
             os.makedirs(outdir_images_trial, exist_ok=True)
-            os.makedirs(outdir_data2d_trial, exist_ok=True)
             for cam in range(ncams):
                 os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
 
