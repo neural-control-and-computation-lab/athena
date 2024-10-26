@@ -6,15 +6,25 @@ import numpy as np
 import os
 from pathlib import Path
 import time
-from tqdm import tqdm
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import tkinter.ttk as ttk  # For the progress bar
 from mediapipe import solutions
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks.python import vision
-from mediapipe.tasks.python.vision import HandLandmarker, PoseLandmarker, HandLandmarkerOptions, PoseLandmarkerOptions, RunningMode
+from mediapipe.tasks.python.vision import (
+    HandLandmarker,
+    PoseLandmarker,
+    HandLandmarkerOptions,
+    PoseLandmarkerOptions,
+    RunningMode
+)
 import av
+import concurrent.futures
+import sys
+from multiprocessing import Manager  # Import Manager for shared objects
+import os
+import gc  # Import garbage collector
 
 def createvideo(image_folder, extension, fs, output_folder, video_name):
     """
@@ -106,7 +116,7 @@ def draw_hand_landmarks_on_image(rgb_image, detection_result):
         text_y = int(min(y_coordinates) * height) - MARGIN
 
         # Draw handedness (left or right hand) on the image.
-        cv.putText(annotated_image, f"{handedness.category_name}",  # Now correctly accessing category_name
+        cv.putText(annotated_image, f"{handedness.category_name}",
                    (text_x, text_y), cv.FONT_HERSHEY_DUPLEX,
                    FONT_SIZE, HANDEDNESS_TEXT_COLOR, FONT_THICKNESS, cv.LINE_AA)
 
@@ -143,15 +153,72 @@ def readcalibration(calfilepathway):
     return extrinsics, intrinsics, dist_coeffs
 
 
-def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeffs, outdir_images_trial, display_width=450, display_height=360):
+def transformationmatrix(R, t):
+    """
+    Create a 4x4 transformation matrix based on a rotation vector and translation vector.
+
+    :param R: 3x3 rotation matrix.
+    :param t: translation vector.
+    :return: 4x4 transformation matrix.
+    """
+
+    T = np.concatenate((R, t.reshape(3, 1)), axis=1)
+    T = np.vstack((T, [0, 0, 0, 1]))
+    return T
+
+
+
+def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_coeffs, undistort_map, display_width,
+                   display_height, progress_queue):
+    """
+    Processes a single camera stream and saves keypoints directly to disk.
+
+    Args:
+        cam (int): Camera index.
+        input_stream (str): Path to the input video file.
+        gui_options (dict): Dictionary containing GUI options and settings.
+        cam_mats_intrinsic (list): List of intrinsic camera matrices.
+        cam_dist_coeffs (list): List of camera distortion coefficients.
+        undistort_map (tuple): Precomputed undistortion maps for the camera.
+        display_width (int): Width for displaying frames.
+        display_height (int): Height for displaying frames.
+        progress_queue (multiprocessing.Manager().Queue): Queue for communicating progress.
+
+    Returns:
+        int: Camera index.
+    """
+    import os
+
     # Extract options from the gui_options dictionary
     save_images = gui_options['save_images']
     monitor_images = gui_options['monitor_images']
     use_gpu = gui_options['use_gpu']
     process_to_frame = gui_options['slider_value']
-    fps_label = gui_options['fps_label']  # Get the FPS label from the dictionary
-    progress_bar = gui_options['progress_bar']  # Get the progress bar from the dictionary
-    root = gui_options['root']  # Get the root Tkinter window
+    outdir_images_trial = gui_options['outdir_images_trial']
+    outdir_data2d_trial = gui_options['outdir_data2d_trial']
+    trialname = gui_options['trialname']
+
+    # Paths for saving data
+    data_save_path = os.path.join(outdir_data2d_trial, f'cam{cam}')
+    os.makedirs(data_save_path, exist_ok=True)
+
+    # Initialize file paths for saving keypoints
+    kpts_cam_l_file = os.path.join(data_save_path, '2Dlandmarks_left.npy')
+    kpts_cam_r_file = os.path.join(data_save_path, '2Dlandmarks_right.npy')
+    kpts_body_file = os.path.join(data_save_path, '2Dlandmarks_body.npy')
+    kpts_cam_l_world_file = os.path.join(data_save_path, '2Dworldlandmarks_left.npy')
+    kpts_cam_r_world_file = os.path.join(data_save_path, '2Dworldlandmarks_right.npy')
+    kpts_body_world_file = os.path.join(data_save_path, '2Dworldlandmarks_body.npy')
+    confidence_hand_file = os.path.join(data_save_path, 'handedness_score.npy')
+
+    # Prepare lists to store keypoints
+    kpts_cam_l = []
+    kpts_cam_r = []
+    kpts_body = []
+    kpts_cam_l_world = []
+    kpts_cam_r_world = []
+    kpts_body_world = []
+    handscore = []
 
     # Load HandLandmarker and PoseLandmarker models
     hand_model_path = 'hand_landmarker.task'
@@ -170,231 +237,201 @@ def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeff
         running_mode=RunningMode.VIDEO
     )
 
-    # Create a list of PyAV containers based on input_streams
-    containers = [av.open(stream) for stream in input_streams]
-    video_streams = [container.streams.video[0] for container in containers]
+    # Create PyAV container and video stream
+    container = av.open(input_stream)
+    video_stream = container.streams.video[0]
 
-    # Get FPS and total frames from the first video stream
-    fps = video_streams[0].average_rate
-    if fps.denominator != 0:
-        fps = fps.numerator / fps.denominator
+    # Get video FPS and total frames
+    if video_stream.average_rate is not None and video_stream.average_rate.denominator != 0:
+        fps = video_stream.average_rate.numerator / video_stream.average_rate.denominator
     else:
-        fps = 30  # Default FPS if not available
-    total_frames = video_streams[0].frames
+        fps = 30.0  # Default FPS if not available
 
-    # Initialize HandLandmarker and PoseLandmarker for each camera
-    hand_landmarkers = [HandLandmarker.create_from_options(hand_options) for _ in containers]
-    pose_landmarkers = [PoseLandmarker.create_from_options(pose_options) for _ in containers]
+    total_frames = video_stream.frames
+    if total_frames == 0:
+        # Estimate total frames if not available
+        duration_s = container.duration / av.time_base
+        total_frames = int(duration_s * fps)
 
-    # Containers for detected key points for each camera
-    kpts_cam_l = [[] for _ in containers]
-    kpts_cam_r = [[] for _ in containers]
-    kpts_body = [[] for _ in containers]
-
-    # Containers for detected keypoints (world coordinates) for each camera
-    kpts_cam_l_world = [[] for _ in containers]
-    kpts_cam_r_world = [[] for _ in containers]
-    kpts_body_world = [[] for _ in containers]
-
-    # Containers for handedness confidence scores
-    handscore = [[] for _ in containers]
+    # Initialize HandLandmarker and PoseLandmarker for this camera
+    hand_landmarker = HandLandmarker.create_from_options(hand_options)
+    pose_landmarker = PoseLandmarker.create_from_options(pose_options)
 
     # Define expected lengths
     num_hand_keypoints = 21
     num_body_keypoints = 33
 
-    # Initialize frame number for each camera
-    framenums = [0] * len(containers)
-
-    # Initialize a counter for forced updates
-    frame_counter = 0
-
-    # Track start time for FPS calculation
+    # Start time for processing FPS calculation
     start_time = time.time()
+    last_fps_time = start_time
+    frames_since_last_fps = 0
 
-    # Precompute undistortion maps
-    frame_width, frame_height = None, None
-    undistort_maps = []
-
-    # Get frame dimensions and undistort maps from the first frame
-    for cam, container in enumerate(containers):
-        for packet in container.demux(video=0):
-            for frame in packet.decode():
-                frame_array = frame.to_ndarray(format='rgb24')
-                frame_height, frame_width = frame_array.shape[:2]
-                # Set up undistort maps
-                map1, map2 = cv.initUndistortRectifyMap(cam_mats_intrinsic[cam], cam_dist_coeffs[cam], None, None, (frame_width, frame_height), cv.CV_16SC2)
-                undistort_maps.append((map1, map2))
-                break  # Only need one frame
-            break  # Only need one packet
-
-    # Reset the containers to start from the beginning
-    containers = [av.open(stream) for stream in input_streams]
-    frame_iters = [container.decode(video=0) for container in containers]
-
+    # Initialize frame number
+    framenum = 0
     max_frames = int(process_to_frame * total_frames)
 
-    while framenums[0] < max_frames:
-        frames = []
-        for frame_iter in frame_iters:
-            try:
-                frame = next(frame_iter)
-                frames.append(frame)
-            except StopIteration:
-                frames.append(None)
-        if any(frame is None for frame in frames):
+    prev_timestamp_ms = -1  # Initialize previous timestamp
+
+    # Use frame iterator directly
+    frame_iter = container.decode(video=0)
+    for frame in frame_iter:
+        if framenum >= max_frames:
             break
 
-        # Process each frame
-        for cam, frame in enumerate(frames):
-            if frame is None:
-                continue
-            # Convert PyAV frame to NumPy array in RGB format
-            frame_array = frame.to_ndarray(format='rgb24')
+        # Convert PyAV frame to NumPy array in RGB format
+        frame_array = frame.to_ndarray(format='rgb24')
 
-            # Undistort image using precomputed maps
-            map1, map2 = undistort_maps[cam]
-            frame_array = cv.remap(frame_array, map1, map2, interpolation=cv.INTER_LINEAR)
+        # Undistort image using precomputed maps
+        map1, map2 = undistort_map
+        frame_array = cv.remap(frame_array, map1, map2, interpolation=cv.INTER_LINEAR)
 
-            # Convert to RGBA if using GPU
-            if use_gpu:
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGBA, data=cv.cvtColor(frame_array, cv.COLOR_RGB2RGBA))
-            else:
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_array)
+        # Convert to RGBA if using GPU
+        if use_gpu:
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGBA, data=cv.cvtColor(frame_array, cv.COLOR_RGB2RGBA))
+        else:
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_array)
 
-            timestamp_ms = int(framenums[cam] * 1000 / fps)
+        # Calculate timestamp for MediaPipe in milliseconds
+        timestamp_ms = int(framenum * 1000 / fps)
 
-            # Hand Landmarks detection
-            hand_results = hand_landmarkers[cam].detect_for_video(mp_image, timestamp_ms)
-            frame_keypoints_l = []
-            frame_keypoints_r = []
-            frame_keypoints_body = []
-            frame_keypoints_l_world = []
-            frame_keypoints_r_world = []
-            frame_keypoints_body_world = []
-            frame_handscore = [-1, -1]  # Default -1 (not detected)
+        # Ensure timestamps are strictly increasing
+        if timestamp_ms <= prev_timestamp_ms:
+            timestamp_ms = prev_timestamp_ms + 1  # Increment by 1 ms
+        prev_timestamp_ms = timestamp_ms
 
-            if hand_results.hand_landmarks:
-                for hand_landmarks, hand_world_landmarks, handedness_list in zip(
+        # Hand Landmarks detection
+        try:
+            hand_results = hand_landmarker.detect_for_video(mp_image, timestamp_ms)
+        except Exception as e:
+            print(f"Error in hand_landmarker.detect_for_video: {e}")
+            hand_results = mp.tasks.vision.HandLandmarkerResult([], [], [])
+
+        # Pose Landmarks detection
+        try:
+            pose_results = pose_landmarker.detect_for_video(mp_image, timestamp_ms)
+        except Exception as e:
+            print(f"Error in pose_landmarker.detect_for_video: {e}")
+            pose_results = mp.tasks.vision.PoseLandmarkerResult([], [])
+
+        # Hand Landmarks processing
+        frame_keypoints_l = []
+        frame_keypoints_r = []
+        frame_keypoints_l_world = []
+        frame_keypoints_r_world = []
+        frame_handscore = [-1, -1]  # Default -1 (not detected)
+
+        if hand_results.hand_landmarks:
+            for hand_landmarks, hand_world_landmarks, handedness_list in zip(
                     hand_results.hand_landmarks, hand_results.hand_world_landmarks, hand_results.handedness):
-                    handedness = handedness_list[0]
+                handedness = handedness_list[0]
 
-                    # Process Left and Right hands separately
-                    if handedness.category_name == 'Left':
-                        frame_keypoints_l = [[int(frame_array.shape[1] * hand_landmark.x),
-                                              int(frame_array.shape[0] * hand_landmark.y),
-                                              hand_landmark.z,
-                                              hand_landmark.visibility, hand_landmark.presence] for hand_landmark in hand_landmarks]
-                        frame_keypoints_l_world = [[int(frame_array.shape[1] * hand_landmark.x),
-                                                    int(frame_array.shape[0] * hand_landmark.y),
-                                                    hand_landmark.z,
-                                                    hand_landmark.visibility, hand_landmark.presence] for hand_landmark in hand_world_landmarks]
-                        frame_handscore[0] = handedness.score
-                    else:
-                        frame_keypoints_r = [[int(frame_array.shape[1] * hand_landmark.x),
-                                              int(frame_array.shape[0] * hand_landmark.y),
-                                              hand_landmark.z,
-                                              hand_landmark.visibility, hand_landmark.presence] for hand_landmark in hand_landmarks]
-                        frame_keypoints_r_world = [[int(frame_array.shape[1] * hand_landmark.x),
-                                                    int(frame_array.shape[0] * hand_landmark.y),
-                                                    hand_landmark.z,
-                                                    hand_landmark.visibility, hand_landmark.presence] for hand_landmark in hand_world_landmarks]
-                        frame_handscore[1] = handedness.score
+                # Process Left and Right hands separately
+                if handedness.category_name == 'Left':
+                    frame_keypoints_l = [[int(frame_array.shape[1] * hand_landmark.x),
+                                          int(frame_array.shape[0] * hand_landmark.y),
+                                          hand_landmark.z,
+                                          hand_landmark.visibility, hand_landmark.presence] for hand_landmark in
+                                         hand_landmarks]
+                    frame_keypoints_l_world = [[hand_world_landmark.x,
+                                                hand_world_landmark.y,
+                                                hand_world_landmark.z,
+                                                hand_world_landmark.visibility, hand_world_landmark.presence] for hand_world_landmark in
+                                               hand_world_landmarks]
+                    frame_handscore[0] = handedness.score
+                else:
+                    frame_keypoints_r = [[int(frame_array.shape[1] * hand_landmark.x),
+                                          int(frame_array.shape[0] * hand_landmark.y),
+                                          hand_landmark.z,
+                                          hand_landmark.visibility, hand_landmark.presence] for hand_landmark in
+                                         hand_landmarks]
+                    frame_keypoints_r_world = [[hand_world_landmark.x,
+                                                hand_world_landmark.y,
+                                                hand_world_landmark.z,
+                                                hand_world_landmark.visibility, hand_world_landmark.presence] for hand_world_landmark in
+                                               hand_world_landmarks]
+                    frame_handscore[1] = handedness.score
 
-                    # Draw hand landmarks on the image
-                    frame_array = draw_hand_landmarks_on_image(frame_array, hand_results)
+                # Draw hand landmarks on the image
+                frame_array = draw_hand_landmarks_on_image(frame_array, hand_results)
 
-            # Pose Landmarks detection
-            pose_results = pose_landmarkers[cam].detect_for_video(mp_image, timestamp_ms)
-
-            if pose_results.pose_landmarks:
-                for pose_landmarks, pose_world_landmarks in zip(
+        # Pose Landmarks processing
+        frame_keypoints_body = []
+        frame_keypoints_body_world = []
+        if pose_results.pose_landmarks:
+            for pose_landmarks, pose_world_landmarks in zip(
                     pose_results.pose_landmarks, pose_results.pose_world_landmarks):
-                    frame_keypoints_body = [[int(body_landmark.x * frame_array.shape[1]),
-                                             int(body_landmark.y * frame_array.shape[0]),
-                                             body_landmark.z,
-                                             body_landmark.visibility, body_landmark.presence] for body_landmark in pose_landmarks]
-                    frame_keypoints_body_world = [[int(body_landmark.x * frame_array.shape[1]),
-                                                   int(body_landmark.y * frame_array.shape[0]),
-                                                   body_landmark.z,
-                                                   body_landmark.visibility, body_landmark.presence] for body_landmark in pose_world_landmarks]
+                frame_keypoints_body = [[int(body_landmark.x * frame_array.shape[1]),
+                                         int(body_landmark.y * frame_array.shape[0]),
+                                         body_landmark.z,
+                                         body_landmark.visibility, body_landmark.presence] for body_landmark in
+                                        pose_landmarks]
+                frame_keypoints_body_world = [[body_world_landmark.x,
+                                               body_world_landmark.y,
+                                               body_world_landmark.z,
+                                               body_world_landmark.visibility, body_world_landmark.presence] for body_world_landmark in
+                                              pose_world_landmarks]
 
-                    # Draw pose landmarks on the image
-                    frame_array = draw_pose_landmarks_on_image(frame_array, pose_results)
+                # Draw pose landmarks on the image
+                frame_array = draw_pose_landmarks_on_image(frame_array, pose_results)
 
-            # Ensure correct number of keypoints by padding
-            if len(frame_keypoints_l) < num_hand_keypoints:
-                frame_keypoints_l += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_l))
-                frame_keypoints_l_world += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_l_world))
-            if len(frame_keypoints_r) < num_hand_keypoints:
-                frame_keypoints_r += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_r))
-                frame_keypoints_r_world += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_r_world))
-            if len(frame_keypoints_body) < num_body_keypoints:
-                frame_keypoints_body += [[-1, -1, -1, -1, -1]] * (num_body_keypoints - len(frame_keypoints_body))
-                frame_keypoints_body_world += [[-1, -1, -1, -1, -1]] * (num_body_keypoints - len(frame_keypoints_body_world))
+        # Ensure correct number of keypoints by padding
+        if len(frame_keypoints_l) < num_hand_keypoints:
+            frame_keypoints_l += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_l))
+            frame_keypoints_l_world += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_l_world))
+        if len(frame_keypoints_r) < num_hand_keypoints:
+            frame_keypoints_r += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_r))
+            frame_keypoints_r_world += [[-1, -1, -1, -1, -1]] * (num_hand_keypoints - len(frame_keypoints_r_world))
+        if len(frame_keypoints_body) < num_body_keypoints:
+            frame_keypoints_body += [[-1, -1, -1, -1, -1]] * (num_body_keypoints - len(frame_keypoints_body))
+            frame_keypoints_body_world += [[-1, -1, -1, -1, -1]] * (
+                    num_body_keypoints - len(frame_keypoints_body_world))
 
-            # Append keypoints
-            kpts_cam_l[cam].append(frame_keypoints_l)
-            kpts_cam_r[cam].append(frame_keypoints_r)
-            kpts_body[cam].append(frame_keypoints_body)
-            kpts_cam_l_world[cam].append(frame_keypoints_l_world)
-            kpts_cam_r_world[cam].append(frame_keypoints_r_world)
-            kpts_body_world[cam].append(frame_keypoints_body_world)
+        # Append keypoints
+        kpts_cam_l.append(frame_keypoints_l)
+        kpts_cam_r.append(frame_keypoints_r)
+        kpts_body.append(frame_keypoints_body)
+        kpts_cam_l_world.append(frame_keypoints_l_world)
+        kpts_cam_r_world.append(frame_keypoints_r_world)
+        kpts_body_world.append(frame_keypoints_body_world)
 
-            # Handedness confidence
-            handscore[cam].append(frame_handscore)
+        # Handedness confidence
+        handscore.append(frame_handscore)
 
-            # Resize the frame
-            resized_frame = cv.resize(frame_array, (display_width, display_height))
+        # Resize the frame
+        resized_frame = cv.resize(frame_array, (display_width, display_height))
 
-            # Display if monitoring
-            if monitor_images:
-                window_x = (cam % 4) * (display_width + 2)  # Adjust for 4 columns
-                window_y = (cam // 4) * (display_height + 29)  # Adjust row position
+        # Save images if needed
+        if save_images:
+            save_path = f'{outdir_images_trial}/cam{cam}/frame{framenum:04d}.png'
+            result = cv.imwrite(save_path, cv.cvtColor(resized_frame, cv.COLOR_RGB2BGR))
+            if not result:
+                print(f"Failed to save frame {framenum:04d} for cam {cam} at {save_path}")
 
-                cv.imshow(f'cam{cam}', cv.cvtColor(resized_frame, cv.COLOR_RGB2BGR))
-                cv.moveWindow(f'cam{cam}', window_x, window_y)
+        # Increment frame number
+        framenum += 1
+        frames_since_last_fps += 1
 
-            # Save images if needed
-            if save_images:
-                save_path = f'{outdir_images_trial}/cam{cam}/frame{framenums[cam]:04d}.png'
-                result = cv.imwrite(save_path, cv.cvtColor(resized_frame, cv.COLOR_RGB2BGR))
-                if not result:
-                    print(f"Failed to save frame {framenums[cam]:04d} for cam {cam} at {save_path}")
+        # Send progress update every N frames (e.g., every 10 frames)
+        if framenum % 10 == 0 or framenum == max_frames:
+            progress = (framenum / max_frames) * 100
+            progress_queue.put({'cam': cam, 'progress': progress})
 
-            # Increment frame number
-            framenums[cam] += 1
+        # Calculate processing FPS every N frames
+        if frames_since_last_fps >= 10 or framenum == max_frames:
+            current_time = time.time()
+            elapsed_time = current_time - last_fps_time
+            if elapsed_time > 0:
+                processing_fps = frames_since_last_fps / elapsed_time
+                progress_queue.put({'cam': cam, 'fps': processing_fps})
+            last_fps_time = current_time
+            frames_since_last_fps = 0
 
-        frame_counter += 1  # Increment the frame counter
+        hand_results.close()
+        pose_results.close()
 
-        # Update FPS label and progress bar every 10 frames
-        if frame_counter % 10 == 0:
-            # FPS calculation
-            elapsed_time = time.time() - start_time
-            fps_value = framenums[0] / elapsed_time if elapsed_time > 0 else 0
-            fps_value = fps_value * len(containers)  # Multiply by number of cameras
-            fps_label.config(text=f"FPS: {fps_value:.2f}")
 
-            # Update progress bar
-            progress_value = (framenums[0] / max_frames) * 100
-            progress_bar["value"] = progress_value
 
-            # Force the GUI to update
-            root.update_idletasks()
-            root.update()
-
-        if cv.waitKey(1) & 0xFF == 27:  # ESC to exit
-            break
-
-    # Release resources
-    cv.destroyAllWindows()
-    for hand_landmarker, pose_landmarker in zip(hand_landmarkers, pose_landmarkers):
-        hand_landmarker.close()
-        pose_landmarker.close()
-    for container in containers:
-        container.close()
-
-    # Convert lists to NumPy arrays
+    # After processing all frames, convert lists to NumPy arrays and save to disk
     kpts_cam_l = np.array(kpts_cam_l)
     kpts_cam_r = np.array(kpts_cam_r)
     kpts_body = np.array(kpts_body)
@@ -403,12 +440,116 @@ def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeff
     kpts_body_world = np.array(kpts_body_world)
     confidence_hand = np.array(handscore)
 
-    return kpts_cam_l, kpts_cam_r, kpts_body, kpts_cam_l_world, kpts_cam_r_world, kpts_body_world, confidence_hand
+    # Save the results to disk
+    np.save(kpts_cam_l_file, kpts_cam_l)
+    np.save(kpts_cam_r_file, kpts_cam_r)
+    np.save(kpts_body_file, kpts_body)
+    np.save(kpts_cam_l_world_file, kpts_cam_l_world)
+    np.save(kpts_cam_r_world_file, kpts_cam_r_world)
+    np.save(kpts_body_world_file, kpts_body_world)
+    np.save(confidence_hand_file, confidence_hand)
+
+    # Release resources
+    hand_landmarker.close()
+    pose_landmarker.close()
+    container.close()
+
+    # Optionally, send a completion message for this camera
+    progress_queue.put({'cam': cam, 'done': True})
+
+    # Return only the camera index to the main process
+    return cam
+
+
+
+def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeffs, outdir_images_trial,
+                  outdir_data2d_trial, trialname,
+                  display_width=450, display_height=360, progress_queue=None):
+    """
+    Processes multiple camera streams in parallel using multiprocessing.
+
+    Args:
+        input_streams (list): List of input video file paths.
+        gui_options (dict): Dictionary containing GUI options and settings.
+        cam_mats_intrinsic (list): List of intrinsic camera matrices.
+        cam_dist_coeffs (list): List of camera distortion coefficients.
+        outdir_images_trial (str): Output directory for images.
+        outdir_data2d_trial (str): Output directory for data.
+        trialname (str): Name of the trial.
+        display_width (int): Width for displaying frames.
+        display_height (int): Height for displaying frames.
+        progress_queue (multiprocessing.Manager().Queue): Queue for communicating progress.
+
+    Returns:
+        None
+    """
+    import multiprocessing
+
+    num_processes = gui_options.get('num_processes', os.cpu_count())
+
+    # Precompute undistortion maps
+    undistort_maps = []
+    frame_width, frame_height = None, None
+
+    # Get frame dimensions and undistort maps from the first frame of each camera
+    for cam, input_stream in enumerate(input_streams):
+        container = av.open(input_stream)
+        for packet in container.demux(video=0):
+            for frame in packet.decode():
+                frame_array = frame.to_ndarray(format='rgb24')
+                frame_height, frame_width = frame_array.shape[:2]
+                # Set up undistort maps
+                map1, map2 = cv.initUndistortRectifyMap(
+                    cam_mats_intrinsic[cam], cam_dist_coeffs[cam], None, None,
+                    (frame_width, frame_height), cv.CV_16SC2)
+                undistort_maps.append((map1, map2))
+                break  # Only need one frame
+            break  # Only need one packet
+        container.close()
+
+    # Update gui_options with additional information
+    gui_options['outdir_images_trial'] = outdir_images_trial
+    gui_options['outdir_data2d_trial'] = outdir_data2d_trial
+    gui_options['trialname'] = trialname
+
+    # Create a copy of gui_options without GUI elements
+    gui_options_no_gui = gui_options.copy()
+    # Remove any GUI elements from gui_options if they are present
+    gui_elements = ['fps_label', 'progress_bar', 'root', 'fps_value', 'progress_var']
+    for key in gui_elements:
+        gui_options_no_gui.pop(key, None)  # Safely remove if present
+
+    # Use ProcessPoolExecutor to process cameras in parallel
+    total_cameras = len(input_streams)
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
+        futures = []
+        for cam, input_stream in enumerate(input_streams):
+            futures.append(executor.submit(
+                process_camera,
+                cam,
+                input_stream,
+                gui_options_no_gui,
+                cam_mats_intrinsic,
+                cam_dist_coeffs,
+                undistort_maps[cam],
+                display_width,
+                display_height,
+                progress_queue  # Pass the progress_queue to child processes
+            ))
+
+        # Wait for all processes to complete
+        for future in concurrent.futures.as_completed(futures):
+            cam = future.result()
+            print(f"Camera {cam} processing complete.")
+
+    # Since data is saved within each process, no need to return any data
+    # Optionally, if you need to perform any post-processing, you can do it here
+
 
 def select_folder_and_options():
     """
-    Create GUI to select folder, set options for saving images/videos, monitoring,
-    and add a slider for selecting a value between 0 and 1, along with FPS display and progress bar.
+    Create GUI to select folder and set options for processing.
     """
     def on_submit():
         # Store all GUI options in a dictionary
@@ -417,14 +558,12 @@ def select_folder_and_options():
         gui_options['monitor_images'] = var_monitor_images.get()
         gui_options['use_gpu'] = var_use_gpu.get()
         gui_options['slider_value'] = slider.get()  # Get the value from the slider
+        gui_options['num_processes'] = num_processes_scale.get()  # Get the number of processes
         gui_options['idfolder'] = idfolder
-        gui_options['fps_label'] = fps_label  # Add FPS label to the dictionary
-        gui_options['progress_bar'] = progress_bar  # Add progress bar to the dictionary
-        gui_options['root'] = root
         if not gui_options['idfolder']:
             messagebox.showerror("Error", "No folder selected!")
         else:
-            root.quit()  # Close the window
+            root.quit()  # Close the options window
 
     # Create a tkinter root window
     root = tk.Tk()
@@ -435,7 +574,7 @@ def select_folder_and_options():
 
     # Set window size and center it on the screen
     window_width = 500
-    window_height = 400
+    window_height = 450  # Adjusted height to accommodate new slider
     screen_width = root.winfo_screenwidth()
     screen_height = root.winfo_screenheight()
     position_x = int((screen_width / 2) - (window_width / 2))
@@ -478,105 +617,171 @@ def select_folder_and_options():
     slider.grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
     slider.set(1.0)
 
-    progress_label = tk.Label(root, text="Progress:")
-    progress_label.grid(row=5, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
-
-    progress_bar = ttk.Progressbar(root, orient="horizontal", mode="determinate", style="TProgressbar")
-    progress_bar.grid(row=6, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
-    progress_bar["value"] = 0
-    progress_bar["maximum"] = 100
-
-    fps_label = tk.Label(root, text="FPS: 0")
-    fps_label.grid(row=7, column=1, padx=10, pady=5)
+    # Add a slider to select the number of parallel processes
+    num_cpus = os.cpu_count()
+    num_processes_scale = tk.Scale(root, from_=1, to=num_cpus, orient=tk.HORIZONTAL,
+                                   label="Number of parallel processes")
+    num_processes_scale.grid(row=4, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
+    num_processes_scale.set(num_cpus)
 
     btn_submit = tk.Button(root, text="GO", command=on_submit)
-    btn_submit.grid(row=4, column=1, padx=10, pady=20)
+    btn_submit.grid(row=5, column=1, padx=10, pady=20)
 
     root.grid_columnconfigure(0, weight=1)
     root.grid_columnconfigure(1, weight=1)
     root.grid_columnconfigure(2, weight=1)
 
     root.mainloop()
-
     return gui_options
 
 
-def transformationmatrix(R, t):
-    """
-    Create a 4x4 transformation matrix based on a rotation vector and translation vector.
-
-    :param R: 3x3 rotation matrix.
-    :param t: translation vector.
-    :return: 4x4 transformation matrix.
-    """
-
-    T = np.concatenate((R, t.reshape(3, 1)), axis=1)
-    T = np.vstack((T, [0, 0, 0, 1]))
-    return T
-
 if __name__ == '__main__':
-    start = time.time()
+    import threading
+    from multiprocessing import Manager, set_start_method
 
+    # Set the multiprocessing start method to 'spawn'
+    set_start_method('spawn')
+
+    # Get the GUI options
     gui_options = select_folder_and_options()
     idfolder = gui_options['idfolder']
 
-    if idfolder:
-        id = os.path.basename(os.path.normpath(idfolder))
+    if not idfolder:
+        print("No folder selected. Exiting.")
+        sys.exit()
 
-        trialfolders = sorted(glob.glob(os.path.join(idfolder, 'videos/*Recording*')))
-        outdir_images = os.path.join(idfolder, 'images/')
-        outdir_video = os.path.join(idfolder, 'videos_processed/')
-        outdir_data2d = os.path.join(idfolder, 'landmarks/')
+    # Create the main root window for progress (since the options window is closed)
+    progress_root = tk.Tk()
+    progress_root.title("Processing Progress")
 
-        print(f"Selected Folder: {idfolder}")
-        print(f"Save Images: {gui_options['save_images']}")
-        print(f"Save Video: {gui_options['save_video']}")
-        print(f"Use GPU: {gui_options['use_gpu']}")
+    # Add progress bar and FPS label to progress_root
+    progress_var = tk.DoubleVar()
+    progress_bar = ttk.Progressbar(progress_root, orient="horizontal", mode="determinate",
+                                   variable=progress_var, maximum=100)
+    progress_bar.pack(pady=10, padx=10, fill=tk.X)
 
-        if gui_options['save_video'] and not gui_options['save_images']:
-            print("Cannot save video without saving images. Adjusting settings.")
-            gui_options['save_video'] = False  # Adjust the setting in gui_options
+    fps_value = tk.DoubleVar()
+    fps_label = tk.Label(progress_root, text="Avg FPS: 0")
+    fps_label.pack(pady=5)
 
-        # Gather camera calibration parameters
-        calfiles = glob.glob(os.path.join(idfolder, 'calibration', '*.yaml'))
-        cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
+    # Create a Manager for shared objects
+    manager = Manager()
+    progress_queue = manager.Queue()
+    cam_progress = manager.dict()  # For tracking progress per camera
+    cam_fps = manager.dict()       # For tracking FPS per camera
 
-        for trial in tqdm(trialfolders):
-            trialname = os.path.basename(trial)
-            print(f"Processing trial: {trialname}")
+    def update_progress():
+        try:
+            # Try to get messages from the queue without blocking
+            while not progress_queue.empty():
+                progress = progress_queue.get_nowait()
+                if 'progress' in progress and 'cam' in progress:
+                    cam = progress['cam']
+                    cam_progress[cam] = progress['progress']
+                    # Calculate total progress
+                    total_progress = sum(cam_progress.values()) / (len(cam_progress) * 100) * 100
+                    progress_var.set(total_progress)
+                    progress_bar["value"] = progress_var.get()
+                if 'fps' in progress and 'cam' in progress:
+                    cam = progress['cam']
+                    fps = progress['fps']
+                    cam_fps[cam] = fps
+                    # Calculate average FPS
+                    avg_fps = sum(cam_fps.values()) / len(cam_fps)
+                    fps_value.set(avg_fps)
+                    fps_label.config(text=f"Avg FPS: {fps_value.get():.2f}")
+                if 'done' in progress:
+                    if progress.get('cam') is not None:
+                        cam = progress['cam']
+                        cam_progress[cam] = 100
+                    else:
+                        fps_label.config(text="Processing Complete")
+                        # Instead of quitting immediately, set a flag
+                        update_progress.processing_done = True
+        except Exception as e:
+            print(f"Error in update_progress: {e}")
+        if not update_progress.processing_done or not progress_queue.empty():
+            # Schedule the function to run again after 100 milliseconds
+            progress_root.after(100, update_progress)
+        else:
+            # All processing is done, and the queue is empty; now we can quit
+            progress_root.quit()
+    # Initialize the processing_done flag
+    update_progress.processing_done = False
 
-            vidnames = sorted(glob.glob(os.path.join(trial, '*.avi')))
-            ncams = len(vidnames)
+    def process_videos():
+        if idfolder:
+            id = os.path.basename(os.path.normpath(idfolder))
 
-            outdir_images_trial = os.path.join(outdir_images, trialname)
-            outdir_video_trial = os.path.join(outdir_video, trialname)
-            outdir_data2d_trial = os.path.join(outdir_data2d, trialname)
+            trialfolders = sorted(glob.glob(os.path.join(idfolder, 'videos/*Recording*')))
+            outdir_images = os.path.join(idfolder, 'images/')
+            outdir_video = os.path.join(idfolder, 'videos_processed/')
+            outdir_data2d = os.path.join(idfolder, 'landmarks/')
 
-            os.makedirs(outdir_data2d_trial, exist_ok=True)
-            if gui_options['save_images']:
-                os.makedirs(outdir_images_trial, exist_ok=True)
+            print(f"Selected Folder: {idfolder}")
+            print(f"Save Images: {gui_options['save_images']}")
+            print(f"Save Video: {gui_options['save_video']}")
+            print(f"Use GPU: {gui_options['use_gpu']}")
+
+            if gui_options['save_video'] and not gui_options['save_images']:
+                print("Cannot save video without saving images. Adjusting settings.")
+                gui_options['save_video'] = False  # Adjust the setting in gui_options
+
+            # Gather camera calibration parameters
+            calfiles = glob.glob(os.path.join(idfolder, 'calibration', '*.yaml'))
+            cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
+
+            total_trials = len(trialfolders)
+            processed_trials = 0
+
+            for trial in trialfolders:
+                trialname = os.path.basename(trial)
+                print(f"Processing trial: {trialname}")
+
+                vidnames = sorted(glob.glob(os.path.join(trial, '*.avi')))
+                ncams = len(vidnames)
+
+                outdir_images_trial = os.path.join(outdir_images, trialname)
+                outdir_video_trial = os.path.join(outdir_video, trialname)
+                outdir_data2d_trial = os.path.join(outdir_data2d, trialname)
+
+                os.makedirs(outdir_data2d_trial, exist_ok=True)
+                if gui_options['save_images']:
+                    os.makedirs(outdir_images_trial, exist_ok=True)
+                    for cam in range(ncams):
+                        os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
+
+                # Initialize cam_progress and cam_fps for each camera
                 for cam in range(ncams):
-                    os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
+                    cam_progress[cam] = 0.0
+                    cam_fps[cam] = 0.0
 
-            # Call run_mediapipe with additional parameters
-            kpts_cam_l, kpts_cam_r, kpts_body, kpts_cam_l_world, kpts_cam_r_world, kpts_body_world, confidence_hand = (
-                run_mediapipe(vidnames, gui_options, cam_mats_intrinsic, cam_dist_coeffs, outdir_images_trial))
+                # Call run_mediapipe with progress_queue
+                run_mediapipe(
+                    vidnames,
+                    gui_options,
+                    cam_mats_intrinsic,
+                    cam_dist_coeffs,
+                    outdir_images_trial,
+                    outdir_data2d_trial,
+                    trialname,
+                    progress_queue=progress_queue
+                )
 
-            # Save the results
-            np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_left.npy'), kpts_cam_l)
-            np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_right.npy'), kpts_cam_r)
-            np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dlandmarks_body.npy'), kpts_body)
-            np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_left.npy'), kpts_cam_l_world)
-            np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_right.npy'), kpts_cam_r_world)
-            np.save(os.path.join(outdir_data2d_trial, f'{trialname}_2Dworldlandmarks_body.npy'), kpts_body_world)
-            np.save(os.path.join(outdir_data2d_trial, f'{trialname}_handedness_score.npy'), confidence_hand)
+                # Update progress per trial
+                processed_trials += 1
+                total_progress = (processed_trials / total_trials) * 100
+                progress_queue.put({'progress': total_progress})
 
-            if gui_options['save_images'] and gui_options['save_video']:
-                os.makedirs(outdir_video_trial, exist_ok=True)
-                for cam in range(ncams):
-                    imagefolder = os.path.join(outdir_images_trial, f'cam{cam}')
-                    createvideo(image_folder=imagefolder, extension='.png', fs=60,
-                                output_folder=outdir_video_trial, video_name=f'cam{cam}.mp4')
+            # When done, put 'done' in the queue
+            print("Processing complete, putting 'done' into queue")
+            progress_queue.put({'done': True})
 
-    end = time.time()
-    print(f'Time to run code: {end - start:.2f} seconds')
+    # Start the processing in a separate thread
+    threading.Thread(target=process_videos).start()
+
+    # Start updating the progress window
+    update_progress()
+
+    # Start the Tkinter main loop for the progress window
+    progress_root.mainloop()
