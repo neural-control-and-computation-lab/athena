@@ -187,11 +187,10 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
     Returns:
         int: Camera index.
     """
-    import os
+    print(f"Starting processing for camera {cam}")
 
     # Extract options from the gui_options dictionary
     save_images = gui_options['save_images']
-    monitor_images = gui_options['monitor_images']
     use_gpu = gui_options['use_gpu']
     process_to_frame = gui_options['slider_value']
     outdir_images_trial = gui_options['outdir_images_trial']
@@ -765,6 +764,13 @@ if __name__ == '__main__':
                     progress_queue=progress_queue
                 )
 
+                if gui_options['save_images'] and gui_options['save_video']:
+                    os.makedirs(outdir_video_trial, exist_ok=True)
+                    for cam in range(ncams):
+                        imagefolder = os.path.join(outdir_images_trial, f'cam{cam}')
+                        createvideo(image_folder=imagefolder, extension='.png', fs=60,
+                                    output_folder=outdir_video_trial, video_name=f'cam{cam}.mp4')
+
                 # Update progress per trial
                 processed_trials += 1
                 total_progress = (processed_trials / total_trials) * 100
@@ -773,6 +779,9 @@ if __name__ == '__main__':
             # When done, put 'done' in the queue
             print("Processing complete, putting 'done' into queue")
             progress_queue.put({'done': True})
+
+
+
 
     # Start the processing in a separate thread
     threading.Thread(target=process_videos).start()
