@@ -426,9 +426,6 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
             last_fps_time = current_time
             frames_since_last_fps = 0
 
-        hand_results.close()
-        pose_results.close()
-
 
 
     # After processing all frames, convert lists to NumPy arrays and save to disk
