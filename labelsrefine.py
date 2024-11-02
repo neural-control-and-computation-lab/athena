@@ -5,6 +5,8 @@ from labels2d import createvideo
 import numpy as np
 import os
 from pathlib import Path
+from scipy.interpolate import splev, splrep
+from scipy import signal
 import time
 import tkinter as tk
 from tkinter import filedialog
@@ -28,6 +30,16 @@ def hex2bgr(hexcode):
     return bgr
 
 
+def nan_helper(y):
+    """
+    https://github.com/lambdaloop/anipose/blob/master/anipose/filter_pose.py
+    :param y:
+    :return:
+    """
+
+    return np.isnan(y), lambda z: z.nonzero()[0]
+
+
 def project_3d_to_2d(X_world, intrinsic_matrix, extrinsic_matrix):
 
     # Transform 3D point to camera coordinates
@@ -43,56 +55,146 @@ def project_3d_to_2d(X_world, intrinsic_matrix, extrinsic_matrix):
     return np.array([u, v])
 
 
+def smooth2d(data2d, kernel, pixeldif):
+    """
+    Applies a median filter to the data and calculates difference between original and filtered signal.
+    If difference between signals is beyond certain threshold, a spline is fit to the original data.
+
+    Adapted from here:
+    https://github.com/lambdaloop/anipose/blob/master/anipose/filter_pose.py
+    :param data2d: 2D data.
+    :param kernel: kernel size for median filter.
+    :param pixeldif: Threshold length of pixels difference to warrant spline smooth.
+    :return: Spline fit 2D data.
+    """
+
+    # Empty array for storing median filtered signal
+    data_2d_mfilt = np.empty(data2d.shape)
+
+    # Applying median filter
+    for camera in range(ncams):
+        for landmark in range(21):
+            data_2d_mfilt[camera, :, landmark, 0] = signal.medfilt(data2d[camera, :, landmark, 0], kernel_size=kernel)
+            data_2d_mfilt[camera, :, landmark, 1] = signal.medfilt(data2d[camera, :, landmark, 1], kernel_size=kernel)
+
+    # Calculating difference between original and filtered signal
+    errx = data2d[:, :, :, 0] - data_2d_mfilt[:, :, :, 0]
+    erry = data2d[:, :, :, 1] - data_2d_mfilt[:, :, :, 1]
+    err = np.sqrt((errx ** 2) + (erry ** 2))
+
+    # Applying spline fit to replace extraneous data points
+    data_2d_spline = np.empty(data2d.shape)
+
+    for camera in range(ncams):
+        for landmark in range(21):
+            x = data2d[camera, :, landmark, 0]
+            y = data2d[camera, :, landmark, 1]
+            err_sub = err[camera, :, landmark]
+            bad = np.zeros(err_sub.shape, dtype='bool')
+            bad[err_sub >= pixeldif] = True
+
+            # Ignore first and last few data points
+            bad[:kernel] = False
+            bad[-kernel:] = False
+
+            pos = np.array([x, y]).T
+            posi = np.copy(pos)
+            posi[bad] = np.nan
+
+            for i in range(posi.shape[1]):
+                vals = posi[:, i]
+                nans, ix = nan_helper(vals)
+
+                # More than 1 data point missing, more than 80% data there
+                if np.sum(nans) > 0 and np.mean(~nans) > 0.80:
+                    spline = splrep(ix(~nans), vals[~nans], k=3, s=0)
+                    vals[nans] = splev(ix(nans), spline)
+
+                data_2d_spline[camera, :, landmark, i] = vals
+
+    return data_2d_spline
+
+
 def switch_hands(data2d):
+
+    # Store switched hand data
     data_2d_switched = data2d.copy()
 
-    # Step #1:
+    # Part A: Switch hands based on right and left hands being closest to the respective side arms
     for cam in range(ncams):
 
+        # Wrist (body pose model) and hand (hand pose model) locations
         rwrist = data2d[cam, :, 16, :]
         lwrist = data2d[cam, :, 15, :]
         rhand = data2d[cam, :, 33, :]
         lhand = data2d[cam, :, 54, :]
 
+        # 2D distance between wrist and hands
         norm_rvsr = np.linalg.norm(rwrist - rhand, axis=-1)
         norm_rvsl = np.linalg.norm(rwrist - lhand, axis=-1)
         norm_lvsr = np.linalg.norm(lwrist - rhand, axis=-1)
         norm_lvsl = np.linalg.norm(lwrist - lhand, axis=-1)
 
-        # Condition where hands are switched and both hands present
-        condition1 = norm_rvsr > norm_rvsl
-        condition2 = rhand[:, 0] != -1
-        condition3 = lhand[:, 0] != -1
+        # Present rhand and lhand
+        c1 = (rhand[:, 0] != -1) & (rhand[:, 1] != -1)
+        c2 = (lhand[:, 0] != -1) & (lhand[:, 1] != -1)
 
-        # Condition where left hand is mislabelled as right hand and only 1 hand present
-        condition4 = norm_lvsr < norm_rvsl
-        condition5 = lhand[:, 0] == -1
-        condition6 = norm_rvsr > norm_lvsr  # Need this to prevent where RH is only hand and correctly there
-        combined_condition = (condition1 & condition2 & condition3) | (condition4 & condition5 & condition6)
+        # Present rarm and larm
+        c3 = (rwrist[:, 0] != -1) & (rwrist[:, 1] != -1)
+        c4 = (lwrist[:, 0] != -1) & (lwrist[:, 1] != -1)
 
-        for i, flag in enumerate(combined_condition):
+        # Hands are switched (2 hands and 2 arms present)
+        c5 = norm_rvsr > norm_rvsl
+        c6 = norm_lvsl > norm_lvsr
+        condition1a = c1 & c2 & c3 & c4 & c5 & c6
+
+        # Hands are switched (2 hands and left arm present)
+        c7 = norm_lvsl > norm_lvsr
+        condition2a = c1 & c2 & ~c3 & c4 & c7
+
+        # Hands are switched (2 hands and right arm present)
+        c8 = norm_rvsr > norm_rvsl
+        condition3a = c1 & c2 & c3 & ~c4 & c8
+
+        # Hands are switched (left hand and 2 arms present)
+        c9 = norm_lvsl > norm_rvsl
+        condition4a = ~c1 & c2 & c3 & c4 & c9
+
+        # Hands are switched (right hand and 2 arms present)
+        c10 = norm_rvsr > norm_lvsr
+        condition5a = c1 & ~c2 & c3 & c4 & c10
+
+        # If any of the conditions above are met, then switch hands
+        combined_condition_a = condition1a | condition2a | condition3a | condition4a | condition5a
+
+        for i, flag in enumerate(combined_condition_a):
             if flag:
                 temp = np.copy(data_2d_switched[cam, i, 33:54, :])
                 data_2d_switched[cam, i, 33:54, :] = data_2d_switched[cam, i, 54:75, :]
                 data_2d_switched[cam, i, 54:75, :] = temp
 
-    # Step #2: Output 3D points
+    # Part B: Use estimated 2D projections to further detect hand switching
+    # Estimate 3D locations of the right & left hands and project to 2D for each cam
+    # Undistort and normalize 2D coordinates (distortion coefficients set to 0 as image undistorted already)
     data_2d = data_2d_switched.copy()
-    data_2d[data_2d == -1] = np.nan
+    nancondition = (data_2d[:, :, :, 0] == -1) & (data_2d[:, :, :, 1] == -1)  # Replacing missing data with nans
+    data_2d[nancondition, :] = np.nan
     data_2d = data_2d.reshape((ncams, -1, 2))
     data_2d_undistort = np.empty(data_2d.shape)
     for cam in range(ncams):
         data_2d_undistort[cam] = undistort_points(data_2d[cam].astype(float), cam_mats_intrinsic[cam],
-                                                  cam_dist_coeffs[cam]).reshape(len(data_2d[cam]), 2)
-
-    lhand = np.empty((nframes, 3))
-    lhand[:] = np.nan
-    rhand = np.empty((nframes, 3))
-    rhand[:] = np.nan
+                                                  np.array([0, 0, 0, 0, 0])).reshape(len(data_2d[cam]), 2)
     data_2d_undistort = data_2d_undistort.reshape((ncams, nframes, nlandmarks, 2))
-    handestimate = np.empty((ncams, nframes, 2, 2))
+
+    # Pre-allocate storage of locations for left and right hands
+    lhand = np.empty((nframes, 3))  # 3D location of left hand
+    lhand[:] = np.nan
+    rhand = np.empty((nframes, 3))  # 3D location of right hand
+    rhand[:] = np.nan
+    handestimate = np.empty((ncams, nframes, 2, 2))  # 2D projections of left and right hand
     handestimate[:] = np.nan
 
+    # 3D triangulation and project back to 2D
     for frame in range(nframes):
 
         # Identify cams where left hand and left wrist were tracked
@@ -109,13 +211,14 @@ def switch_hands(data2d):
         good_rw = ~np.isnan(sub_rw[:, 0])
         good_rhrw = good_rh & good_rw
 
-        # Require at least 2 cameras to have picked up both hand and wrist
-        if np.sum(good_lhlw) >= 2:
-            lhand[frame] = triangulate_simple(sub_lh[good_lhlw], cam_mats_extrinsic[good_lhlw])
+        # Require at least 2 cameras to have picked up both hand and wrist for triangulation
+        if np.sum(good_lh) >= 2:
+            lhand[frame] = triangulate_simple(sub_lh[good_lh], cam_mats_extrinsic[good_lh])
 
-        if np.sum(good_rhrw) >= 2:
-            rhand[frame] = triangulate_simple(sub_rh[good_rhrw], cam_mats_extrinsic[good_rhrw])
+        if np.sum(good_rh) >= 2:
+            rhand[frame] = triangulate_simple(sub_rh[good_rh], cam_mats_extrinsic[good_rh])
 
+        # Project back to 2D
         for cam in range(ncams):
             lhand_world = np.append(lhand[frame], 1)
             rhand_world = np.append(rhand[frame], 1)
@@ -124,34 +227,44 @@ def switch_hands(data2d):
             handestimate[cam, frame, 1, :] = project_3d_to_2d(lhand_world, cam_mats_intrinsic[cam],
                                                               cam_mats_extrinsic[cam])
 
-    # Step 3
-    data_2d_switched[data_2d_switched == -1] = -9999
+    # Use estimated 2D projections to further detect hand switching
+    nancondition = (data_2d_switched[:, :, :, 0] == -1) & (data_2d_switched[:, :, :, 1] == -1)
+    data_2d_switched[nancondition, :] = -9999
     for cam in range(ncams):
 
+        # Obtaining locations of right and left hands
         rhand = data_2d_switched[cam, :, 33, :]
         lhand = data_2d_switched[cam, :, 54, :]
         rhand_est = handestimate[cam, :, 0, :]
         lhand_est = handestimate[cam, :, 1, :]
 
+        # Calculating differences between mediapipe predicted and 2D projected hand locations
         norm_rvsrest = np.linalg.norm(rhand - rhand_est, axis=-1)
         norm_lvsrest = np.linalg.norm(lhand - rhand_est, axis=-1)
         norm_rvslest = np.linalg.norm(rhand - lhand_est, axis=-1)
         norm_lvslest = np.linalg.norm(lhand - lhand_est, axis=-1)
 
+        # Condition where MP predicted left hand is closer to estimated right hand
         c1 = norm_lvsrest < norm_rvsrest
         c2 = norm_lvsrest < norm_lvslest
+        condition1b = c1 & c2
 
+        # Condition where MP predicted right hand is closer to estimated left hand
         c3 = norm_rvslest < norm_lvslest
         c4 = norm_rvslest < norm_rvsrest
+        condition2b = c3 & c4
 
-        c5 = (c1 & c2) | (c3 & c4)
+        # If any of the conditions above are met, then switch hands
+        combined_condition_b = condition1b | condition2b
 
-        for i, flag in enumerate(c5):
+        for i, flag in enumerate(combined_condition_b):
             if flag:
                 temp = np.copy(data_2d_switched[cam, i, 33:54, :])
                 data_2d_switched[cam, i, 33:54, :] = data_2d_switched[cam, i, 54:75, :]
                 data_2d_switched[cam, i, 54:75, :] = temp
-    data_2d_switched[data_2d_switched == -9999] = -1
+
+    nancondition = (data_2d_switched[:, :, :, 0] == -9999) & (data_2d_switched[:, :, :, 1] == -9999)
+    data_2d_switched[nancondition, :] = -1
 
     return data_2d_switched
 
@@ -211,6 +324,10 @@ def visualizelabels(input_streams, data, display_width=450, display_height=360):
     framenum = 0
 
     while True:
+
+        # If frame number of video is more than frames of landmarks, quit
+        if framenum > data.shape[1]-1:
+            break
 
         # Read frames from videos
         frames = [cap.read() for cap in caps]
@@ -331,8 +448,9 @@ if __name__ == '__main__':
         for cam in range(ncams):
             os.makedirs(outdir_images_refined + trialname + '/cam' + str(cam), exist_ok=True)
 
-        # Save refined labels
+        # Switch hands and smooth
         data_2d_refined = switch_hands(data_2d_combined)
+        # data_2d_refined = smooth2d(data_2d_refined, kernel=7, pixeldif=20)
         np.save(outdir_data2d + trialname + '/' + trialname + '_2Dlandmarksrefined', data_2d_refined)
 
         # Output visualizations
@@ -342,7 +460,7 @@ if __name__ == '__main__':
         for cam in range(ncams):
             imagefolder = outdir_images_refined + trialname + '/cam' + str(cam)
             print('Saving video.')
-            createvideo(image_folder=imagefolder, extension='.png', fs=60,
+            createvideo(image_folder=imagefolder, extension='.png', fs=100,
                         output_folder=outdir_video + trialname, video_name='cam' + str(cam) + '_refined.mp4')
 
     # Counter
