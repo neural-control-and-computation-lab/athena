@@ -496,7 +496,7 @@ def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeff
                 frame_height, frame_width = frame_array.shape[:2]
                 # Set up undistort maps
                 map1, map2 = cv.initUndistortRectifyMap(
-                    cam_mats_intrinsic[cam], cam_dist_coeffs[cam], None, None,
+                    cam_mats_intrinsic[cam], cam_dist_coeffs[cam], None, cam_mats_intrinsic[cam],
                     (frame_width, frame_height), cv.CV_16SC2)
                 undistort_maps.append((map1, map2))
                 break  # Only need one frame
