@@ -1,17 +1,14 @@
 # Libraries
 import cv2 as cv
 import glob
-from labels2d import createvideo
+import json
+from labels2d import createvideo, readcalibration
 import numpy as np
 import os
-from pathlib import Path
 from scipy.interpolate import splev, splrep
 from scipy import signal
-import time
-import tkinter as tk
-from tkinter import filedialog
+import sys
 from tqdm import tqdm
-from labels2d import readcalibration
 from triangulation import triangulate_simple, undistort_points
 
 
@@ -390,21 +387,12 @@ def visualizelabels(input_streams, data, display_width=450, display_height=360):
 # Run code
 if __name__ == '__main__':
 
-    # Counter
-    start = time.time()
-
-    # Define working directory
-    wdir = Path(os.getcwd())
-
-    # Create a tkinter root window (it won't be displayed)
-    root = tk.Tk()
-    root.withdraw()
+    # Convert gui options back to dictionary
+    gui_options_json = sys.argv[1]
+    gui_options = json.loads(gui_options_json)
 
     # Open a dialog box to select participant's folder
-    idfolder = filedialog.askdirectory(initialdir=str(wdir))
-    id = os.path.split(os.path.split(idfolder)[0])[1]
-    visit = os.path.basename(os.path.normpath(idfolder))
-    print(id + '; ' + visit)
+    idfolder = gui_options['idfolder']
 
     # Identify trials
     trials = sorted(glob.glob(idfolder + '/landmarks/*'))
@@ -428,12 +416,20 @@ if __name__ == '__main__':
 
         # Identify trial name
         trialname = os.path.basename(trial)
-        print(trialname)
+        print(f"Processing trial: {trialname}")
 
         # Load keypoint data
-        data_2d_right = np.load(glob.glob(trial + '/*2Dlandmarks_right.npy')[0]).astype(float)
-        data_2d_left = np.load(glob.glob(trial + '/*2Dlandmarks_left.npy')[0]).astype(float)
-        data_2d_body = np.load(glob.glob(trial + '/*2Dlandmarks_body.npy')[0]).astype(float)
+        data_2d_right = []
+        data_2d_left = []
+        data_2d_body = []
+        landmarkfiles = sorted(glob.glob(trial + '/*'))
+        for cam in range(ncams):
+            data_2d_right.append(np.load(glob.glob(landmarkfiles[cam] + '/*2Dlandmarks_right.npy')[0]).astype(float))
+            data_2d_left.append(np.load(glob.glob(landmarkfiles[cam] + '/*2Dlandmarks_left.npy')[0]).astype(float))
+            data_2d_body.append(np.load(glob.glob(landmarkfiles[cam] + '/*2Dlandmarks_body.npy')[0]).astype(float))
+        data_2d_right = np.stack(data_2d_right)
+        data_2d_left = np.stack(data_2d_left)
+        data_2d_body = np.stack(data_2d_body)
 
         # Isolate keypoint data
         data_2d_combined = np.concatenate((data_2d_body[:, :, :, :2], data_2d_right[:, :, :, :2], data_2d_left[:, :, :, :2]), axis=2)
@@ -454,15 +450,14 @@ if __name__ == '__main__':
         np.save(outdir_data2d + trialname + '/' + trialname + '_2Dlandmarksrefined', data_2d_refined)
 
         # Output visualizations
-        # Refined 2D labels
         vidnames = sorted(glob.glob(idfolder + '/videos/' + trialname + '/*.avi'))
-        visualizelabels(vidnames, data=data_2d_refined)
-        for cam in range(ncams):
-            imagefolder = outdir_images_refined + trialname + '/cam' + str(cam)
-            print('Saving video.')
-            createvideo(image_folder=imagefolder, extension='.png', fs=100,
-                        output_folder=outdir_video + trialname, video_name='cam' + str(cam) + '_refined.mp4')
+        if gui_options['save_images_refine']:
+            print('Saving refined images.')
+            visualizelabels(vidnames, data=data_2d_refined)
 
-    # Counter
-    end = time.time()
-    print('Time to run code: ' + str(end - start) + ' seconds')
+        if gui_options['save_video_refine']:
+            print('Saving refined videos.')
+            for cam in range(ncams):
+                imagefolder = outdir_images_refined + trialname + '/cam' + str(cam)
+                createvideo(image_folder=imagefolder, extension='.png', fs=100,
+                            output_folder=outdir_video + trialname, video_name='cam' + str(cam) + '_refined.mp4')

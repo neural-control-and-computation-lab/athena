@@ -1,16 +1,13 @@
 # Libraries
 import cv2 as cv
 import glob
-from labels2d import createvideo
+import json
+from labels2d import createvideo, readcalibration
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-from pathlib import Path
-import time
-import tkinter as tk
-from tkinter import filedialog
+import sys
 from tqdm import tqdm
-from labels2d import readcalibration
 
 
 def undistort_points(points, matrix, dist):
@@ -139,18 +136,12 @@ def visualize_3d(p3ds, save_path=None):
 # Run code
 if __name__ == '__main__':
 
-    # Counter
-    start = time.time()
-
-    # Define working directory
-    wdir = Path(os.getcwd())
-
-    # Create a tkinter root window (it won't be displayed)
-    root = tk.Tk()
-    root.withdraw()
+    # Convert gui options back to dictionary
+    gui_options_json = sys.argv[1]
+    gui_options = json.loads(gui_options_json)
 
     # Open a dialog box to select participant's folder
-    idfolder = filedialog.askdirectory(initialdir=str(wdir))
+    idfolder = gui_options['idfolder']
 
     # Gather camera calibration parameters
     calfiles = glob.glob(idfolder + '/calibration/*.yaml')
@@ -174,7 +165,7 @@ if __name__ == '__main__':
 
         # Identify trial name
         trialname = os.path.basename(trial)
-        print(trialname)
+        print(f"Processing trial: {trialname}")
 
         # Load 2D hand location data and reshape
         data_2d = np.load(glob.glob(trial + '/*2Dlandmarksrefined.npy')[0]).astype(float)
@@ -205,7 +196,6 @@ if __name__ == '__main__':
         npoints = data_2d_undistort.shape[1]  # nframes x nlandmarks
         data3d = np.empty((npoints, 3))
         data3d[:] = np.nan
-        print('Triangulating.')
         for point in range(npoints):
 
             subp = data_2d_undistort[:, point, :]
@@ -230,12 +220,10 @@ if __name__ == '__main__':
         os.makedirs(outdir_video_trialfolder, exist_ok=True)
 
         # Output 3D visualizations
-        print('Saving images.')
-        # visualize_3d(data3d, save_path=outdir_images_trialfolder + 'frame_{:04d}.png')
-        print('Saving video.')
-        createvideo(image_folder=outdir_images_trialfolder, extension='.png', fs=60,
-                    output_folder=outdir_video_trialfolder, video_name='data3d.mp4')
-
-    # Counter
-    end = time.time()
-    print('Time to run code: ' + str(end - start) + ' seconds')
+        if gui_options['save_images_triangulation']:
+            print('Saving images.')
+            visualize_3d(data3d, save_path=outdir_images_trialfolder + 'frame_{:04d}.png')
+        if gui_options['save_video_triangulation']:
+            print('Saving video.')
+            createvideo(image_folder=outdir_images_trialfolder, extension='.png', fs=100,
+                        output_folder=outdir_video_trialfolder, video_name='data3d.mp4')
