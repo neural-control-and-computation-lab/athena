@@ -1,14 +1,10 @@
 # Libraries
+import av
+import concurrent.futures
 import cv2 as cv
 import glob
+import json
 import mediapipe as mp
-import numpy as np
-import os
-from pathlib import Path
-import time
-import tkinter as tk
-from tkinter import filedialog, messagebox
-import tkinter.ttk as ttk  # For the progress bar
 from mediapipe import solutions
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks.python import vision
@@ -19,12 +15,13 @@ from mediapipe.tasks.python.vision import (
     PoseLandmarkerOptions,
     RunningMode
 )
-import av
-import concurrent.futures
-import sys
-from multiprocessing import Manager  # Import Manager for shared objects
+import numpy as np
 import os
-import gc  # Import garbage collector
+import sys
+import time
+import tkinter as tk
+import tkinter.ttk as ttk  # For the progress bar
+
 
 def createvideo(image_folder, extension, fs, output_folder, video_name):
     """
@@ -167,7 +164,6 @@ def transformationmatrix(R, t):
     return T
 
 
-
 def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_coeffs, undistort_map, display_width,
                    display_height, progress_queue):
     """
@@ -190,12 +186,13 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
     print(f"Starting processing for camera {cam}")
 
     # Extract options from the gui_options dictionary
-    save_images = gui_options['save_images']
+    save_images = gui_options['save_images_mp']
     use_gpu = gui_options['use_gpu']
-    process_to_frame = gui_options['slider_value']
+    process_to_frame = gui_options['fraction_frames']
     outdir_images_trial = gui_options['outdir_images_trial']
     outdir_data2d_trial = gui_options['outdir_data2d_trial']
-    trialname = gui_options['trialname']
+    hand_confidence = gui_options['hand_confidence']
+    pose_confidence = gui_options['pose_confidence']
 
     # Paths for saving data
     data_save_path = os.path.join(outdir_data2d_trial, f'cam{cam}')
@@ -229,11 +226,13 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
     hand_options = HandLandmarkerOptions(
         base_options=mp.tasks.BaseOptions(model_asset_path=hand_model_path, delegate=delegate),
         running_mode=RunningMode.VIDEO,
-        num_hands=2
+        num_hands=2, min_hand_detection_confidence=hand_confidence,
+        min_hand_presence_confidence=hand_confidence, min_tracking_confidence=hand_confidence
     )
     pose_options = PoseLandmarkerOptions(
         base_options=mp.tasks.BaseOptions(model_asset_path=pose_model_path, delegate=delegate),
-        running_mode=RunningMode.VIDEO
+        running_mode=RunningMode.VIDEO, min_pose_detection_confidence=pose_confidence,
+        min_pose_presence_confidence=pose_confidence, min_tracking_confidence=pose_confidence
     )
 
     # Create PyAV container and video stream
@@ -425,8 +424,6 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
             last_fps_time = current_time
             frames_since_last_fps = 0
 
-
-
     # After processing all frames, convert lists to NumPy arrays and save to disk
     kpts_cam_l = np.array(kpts_cam_l)
     kpts_cam_r = np.array(kpts_cam_r)
@@ -455,7 +452,6 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
 
     # Return only the camera index to the main process
     return cam
-
 
 
 def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeffs, outdir_images_trial,
@@ -543,94 +539,6 @@ def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeff
     # Optionally, if you need to perform any post-processing, you can do it here
 
 
-def select_folder_and_options():
-    """
-    Create GUI to select folder and set options for processing.
-    """
-    def on_submit():
-        # Store all GUI options in a dictionary
-        gui_options['save_images'] = var_save_images.get()
-        gui_options['save_video'] = var_save_video.get()
-        gui_options['monitor_images'] = var_monitor_images.get()
-        gui_options['use_gpu'] = var_use_gpu.get()
-        gui_options['slider_value'] = slider.get()  # Get the value from the slider
-        gui_options['num_processes'] = num_processes_scale.get()  # Get the number of processes
-        gui_options['idfolder'] = idfolder
-        if not gui_options['idfolder']:
-            messagebox.showerror("Error", "No folder selected!")
-        else:
-            root.quit()  # Close the options window
-
-    # Create a tkinter root window
-    root = tk.Tk()
-    root.title("Options for Processing")
-
-    # Initialize a dictionary to hold the GUI options
-    gui_options = {}
-
-    # Set window size and center it on the screen
-    window_width = 500
-    window_height = 450  # Adjusted height to accommodate new slider
-    screen_width = root.winfo_screenwidth()
-    screen_height = root.winfo_screenheight()
-    position_x = int((screen_width / 2) - (window_width / 2))
-    position_y = int((screen_height / 2) - (window_height / 2))
-    root.geometry(f'{window_width}x{window_height}+{position_x}+{position_y}')
-
-    # Select folder button and folder label
-    def select_folder():
-        nonlocal idfolder
-        idfolder = filedialog.askdirectory(initialdir=str(Path(os.getcwd())))
-        folder_label.config(text="Folder: " + idfolder)
-
-    idfolder = ""  # Initialize folder path
-    btn_select_folder = tk.Button(root, text="Select Folder", command=select_folder)
-    btn_select_folder.grid(row=0, column=0, padx=10, pady=10)
-
-    folder_label = tk.Label(root, text="Folder: Not selected", anchor='w', wraplength=450)
-    folder_label.grid(row=0, column=1, padx=10, pady=10, columnspan=3, sticky="w")
-
-    # Checkbox for saving images, videos, and monitoring images
-    var_save_images = tk.BooleanVar(value=False)
-    var_save_video = tk.BooleanVar(value=False)
-    var_monitor_images = tk.BooleanVar(value=False)
-    var_use_gpu = tk.BooleanVar(value=True)
-
-    chk_save_images = tk.Checkbutton(root, text="Save Images", variable=var_save_images)
-    chk_save_images.grid(row=1, column=0, padx=10, pady=5)
-
-    chk_save_video = tk.Checkbutton(root, text="Save Video", variable=var_save_video)
-    chk_save_video.grid(row=1, column=1, padx=10, pady=5)
-
-    chk_monitor_images = tk.Checkbutton(root, text="Monitor Images", variable=var_monitor_images)
-    chk_monitor_images.grid(row=1, column=2, padx=10, pady=5)
-
-    chk_use_gpu = tk.Checkbutton(root, text="GPU Processing", variable=var_use_gpu)
-    chk_use_gpu.grid(row=2, column=1, padx=10, pady=5)
-
-    slider = tk.Scale(root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
-                      label="Fraction of recordings to process")
-    slider.grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
-    slider.set(1.0)
-
-    # Add a slider to select the number of parallel processes
-    num_cpus = os.cpu_count()
-    num_processes_scale = tk.Scale(root, from_=1, to=num_cpus, orient=tk.HORIZONTAL,
-                                   label="Number of parallel processes")
-    num_processes_scale.grid(row=4, column=0, columnspan=3, padx=10, pady=10, sticky="ew")
-    num_processes_scale.set(num_cpus)
-
-    btn_submit = tk.Button(root, text="GO", command=on_submit)
-    btn_submit.grid(row=5, column=1, padx=10, pady=20)
-
-    root.grid_columnconfigure(0, weight=1)
-    root.grid_columnconfigure(1, weight=1)
-    root.grid_columnconfigure(2, weight=1)
-
-    root.mainloop()
-    return gui_options
-
-
 if __name__ == '__main__':
     import threading
     from multiprocessing import Manager, set_start_method
@@ -638,13 +546,12 @@ if __name__ == '__main__':
     # Set the multiprocessing start method to 'spawn'
     set_start_method('spawn')
 
-    # Get the GUI options
-    gui_options = select_folder_and_options()
-    idfolder = gui_options['idfolder']
+    # Convert gui options back to dictionary
+    gui_options_json = sys.argv[1]
+    gui_options = json.loads(gui_options_json)
 
-    if not idfolder:
-        print("No folder selected. Exiting.")
-        sys.exit()
+    # Get the GUI options
+    idfolder = gui_options['idfolder']
 
     # Create the main root window for progress (since the options window is closed)
     progress_root = tk.Tk()
@@ -715,13 +622,13 @@ if __name__ == '__main__':
             outdir_data2d = os.path.join(idfolder, 'landmarks/')
 
             print(f"Selected Folder: {idfolder}")
-            print(f"Save Images: {gui_options['save_images']}")
-            print(f"Save Video: {gui_options['save_video']}")
+            print(f"Save Images: {gui_options['save_images_mp']}")
+            print(f"Save Video: {gui_options['save_video_mp']}")
             print(f"Use GPU: {gui_options['use_gpu']}")
 
-            if gui_options['save_video'] and not gui_options['save_images']:
+            if gui_options['save_video_mp'] and not gui_options['save_images_mp']:
                 print("Cannot save video without saving images. Adjusting settings.")
-                gui_options['save_video'] = False  # Adjust the setting in gui_options
+                gui_options['save_video_mp'] = False  # Adjust the setting in gui_options
 
             # Gather camera calibration parameters
             calfiles = glob.glob(os.path.join(idfolder, 'calibration', '*.yaml'))
@@ -742,7 +649,7 @@ if __name__ == '__main__':
                 outdir_data2d_trial = os.path.join(outdir_data2d, trialname)
 
                 os.makedirs(outdir_data2d_trial, exist_ok=True)
-                if gui_options['save_images']:
+                if gui_options['save_images_mp']:
                     os.makedirs(outdir_images_trial, exist_ok=True)
                     for cam in range(ncams):
                         os.makedirs(os.path.join(outdir_images_trial, f'cam{cam}'), exist_ok=True)
@@ -764,7 +671,7 @@ if __name__ == '__main__':
                     progress_queue=progress_queue
                 )
 
-                if gui_options['save_images'] and gui_options['save_video']:
+                if gui_options['save_images_mp'] and gui_options['save_video_mp']:
                     os.makedirs(outdir_video_trial, exist_ok=True)
                     for cam in range(ncams):
                         imagefolder = os.path.join(outdir_images_trial, f'cam{cam}')
@@ -779,9 +686,6 @@ if __name__ == '__main__':
             # When done, put 'done' in the queue
             print("Processing complete, putting 'done' into queue")
             progress_queue.put({'done': True})
-
-
-
 
     # Start the processing in a separate thread
     threading.Thread(target=process_videos).start()
