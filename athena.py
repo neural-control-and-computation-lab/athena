@@ -23,17 +23,14 @@ def select_folder_and_options():
         gui_options['run_mediapipe'] = var_run_mediapipe.get()
         gui_options['save_images_mp'] = var_save_images_mp.get()
         gui_options['save_video_mp'] = var_save_video_mp.get()
-        gui_options['monitor_images_mp'] = var_monitor_images_mp.get()
         gui_options['hand_confidence'] = slider_handconf.get()
         gui_options['pose_confidence'] = slider_poseconf.get()
         gui_options['run_refine_labels'] = var_refine_labels.get()
         gui_options['save_images_refine'] = var_save_images_refine.get()
         gui_options['save_video_refine'] = var_save_video_refine.get()
-        gui_options['monitor_images_refine'] = var_monitor_images_refine.get()
         gui_options['run_triangulation'] = var_triangulation.get()
         gui_options['save_images_triangulation'] = var_save_images_triangulation.get()
         gui_options['save_video_triangulation'] = var_save_video_triangulation.get()
-        gui_options['monitor_images_triangulation'] = var_monitor_images_triangulation.get()
 
         if not gui_options['idfolder']:
             messagebox.showerror("Error", "No folder selected!")
@@ -60,16 +57,13 @@ def select_folder_and_options():
     var_run_mediapipe = tk.BooleanVar(value=True)
     var_save_images_mp = tk.BooleanVar(value=False)
     var_save_video_mp = tk.BooleanVar(value=False)
-    var_monitor_images_mp = tk.BooleanVar(value=False)
     var_use_gpu = tk.BooleanVar(value=True)
     var_refine_labels = tk.BooleanVar(value=True)
     var_save_images_refine = tk.BooleanVar(value=False)
     var_save_video_refine = tk.BooleanVar(value=False)
-    var_monitor_images_refine = tk.BooleanVar(value=False)
     var_triangulation = tk.BooleanVar(value=True)
     var_save_images_triangulation = tk.BooleanVar(value=False)
     var_save_video_triangulation = tk.BooleanVar(value=False)
-    var_monitor_images_triangulation = tk.BooleanVar(value=False)
 
     # Select Folder
     def select_folder():
@@ -116,9 +110,6 @@ def select_folder_and_options():
     chk_save_video_mp = tk.Checkbutton(root, text="Save Video", variable=var_save_video_mp)
     chk_save_video_mp.grid(row=6, column=1, padx=5, pady=5, sticky="w")
 
-    chk_monitor_images_mp = tk.Checkbutton(root, text="Monitor Images", variable=var_monitor_images_mp)
-    chk_monitor_images_mp.grid(row=6, column=2, padx=5, pady=5, sticky="w")
-
     slider_handconf = tk.Scale(root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
                                label="Minimum hand detection & tracking confidence")
     slider_handconf.grid(row=7, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
@@ -139,9 +130,6 @@ def select_folder_and_options():
     chk_save_video_refine = tk.Checkbutton(root, text="Save Video", variable=var_save_video_refine)
     chk_save_video_refine.grid(row=10, column=1, padx=5, pady=5, sticky="w")
 
-    chk_monitor_images_refine = tk.Checkbutton(root, text="Monitor Images", variable=var_monitor_images_refine)
-    chk_monitor_images_refine.grid(row=10, column=2, padx=5, pady=5, sticky="w")
-
     # Section 4: Triangulation
     chk_run_refinelabels = tk.Checkbutton(root, text="Triangulation", font=("Arial", 12, "bold"), variable=var_triangulation)
     chk_run_refinelabels.grid(row=11, column=0, padx=10, pady=(10, 0), sticky="w")
@@ -151,9 +139,6 @@ def select_folder_and_options():
 
     chk_save_video_triangulation = tk.Checkbutton(root, text="Save Video", variable=var_save_video_triangulation)
     chk_save_video_triangulation.grid(row=12, column=1, padx=5, pady=5, sticky="w")
-
-    chk_monitor_images_triangulation = tk.Checkbutton(root, text="Monitor Images", variable=var_monitor_images_triangulation)
-    chk_monitor_images_triangulation.grid(row=12, column=2, padx=5, pady=5, sticky="w")
 
     # Run button
     btn_submit = tk.Button(root, text="GO", command=on_submit)
