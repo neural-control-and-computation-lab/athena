@@ -1,5 +1,6 @@
 # Libraries
 import cv2 as cv
+import sys
 import glob
 import json
 from labels2d import createvideo, readcalibration
@@ -7,10 +8,10 @@ import numpy as np
 import os
 from scipy.interpolate import splev, splrep
 from scipy.ndimage import generic_filter, gaussian_filter1d
-import sys
 from tqdm import tqdm
-from triangulation import triangulate_simple, undistort_points
 import matplotlib.pyplot as plt
+import av
+from concurrent.futures import ThreadPoolExecutor
 
 
 def undistort_points(points, matrix, dist):
@@ -57,16 +58,6 @@ def hex2bgr(hexcode):
     return bgr
 
 
-def nan_helper(y):
-    """
-    https://github.com/lambdaloop/anipose/blob/master/anipose/filter_pose.py
-    :param y:
-    :return:
-    """
-
-    return np.isnan(y), lambda z: z.nonzero()[0]
-
-
 def project_3d_to_2d(X_world, intrinsic_matrix, extrinsic_matrix):
     # Transform 3D point to camera coordinates
     X_camera = np.dot(extrinsic_matrix, X_world)
@@ -81,12 +72,7 @@ def project_3d_to_2d(X_world, intrinsic_matrix, extrinsic_matrix):
     return np.array([u, v])
 
 
-import numpy as np
-from scipy.ndimage import generic_filter, gaussian_filter1d
-from scipy.interpolate import splrep, splev
-
-
-def smooth3d(data3d, kernel, threshold_mm, sigma=1.0):
+def smooth3d(data3d, kernel=7, threshold_mm=1e10, sigma=1.):
     """
     Applies a hybrid median-Gaussian filter to smooth 3D tracking data and uses spline fitting
     to replace erratic points based on a dynamic threshold.
@@ -107,41 +93,8 @@ def smooth3d(data3d, kernel, threshold_mm, sigma=1.0):
     for coord in range(3):
         data_3d_mfilt[:, :, coord] = nanmedian_filter(data3d[:, :, coord], kernel_size=kernel)
 
-    # Smooth median-filtered signal with Gaussian filter
-    data_3d_mfilt = gaussian_filter1d(data_3d_mfilt, sigma=sigma, axis=0)
 
-    def nan_helper(y):
-        nans = np.isnan(y)
-        return nans, lambda z: z.nonzero()[0]
-
-    # Calculate difference in 3D space
-    err = np.sqrt(np.nansum((data3d - data_3d_mfilt) ** 2, axis=2))
-
-    # Apply spline fit to replace extraneous data points
-    data_3d_spline = np.copy(data3d)
-    for landmark in range(data3d.shape[1]):
-        err_sub = err[:, landmark]
-
-        # Calculate dynamic threshold based on local std deviation
-        local_threshold = np.nanstd(data_3d_mfilt[:, landmark, :]) * 1.5
-        bad = np.zeros(err_sub.shape, dtype=bool)
-        bad[err_sub >= (threshold_mm + local_threshold)] = True
-        bad[:kernel] = False
-        bad[-kernel:] = False
-
-        # Spline fitting for each coordinate with guard bands
-        for coord in range(3):
-            pos = np.copy(data3d[:, landmark, coord])
-            pos[bad] = np.nan
-
-            nans, ix = nan_helper(pos)
-            if np.sum(nans) > 0 and np.mean(~nans) > 0.80:
-                spline = splrep(ix(~nans), pos[~nans], k=3, s=0)
-                pos[nans] = splev(ix(nans), spline)
-
-            data_3d_spline[:, landmark, coord] = pos
-
-    return data_3d_spline
+    return data_3d_mfilt
 
 def switch_hands(data2d):
 
@@ -296,135 +249,109 @@ def switch_hands(data2d):
 
     return data_2d_switched
 
-#TODO: parallelize visualize labels
-def visualizelabels(input_streams, data, display_width=450, display_height=360):
+
+def process_camera(cam, input_stream, data, display_width, display_height, outdir_images_refined, trialname, framenum):
+    """
+    Process a single camera stream for a given frame number, drawing 2D hand landmarks and saving images.
+    """
+    try:
+        # Open video stream with PyAV
+        container = av.open(input_stream)
+        stream = container.streams.video[0]
+        stream.thread_type = 'AUTO'  # Set threading for PyAV
+
+        colors = ['#009988', '#009988', '#009988', '#009988',
+                  '#EE7733', '#EE7733', '#EE7733', '#EE7733',
+                  '#DDDDDD', '#DDDDDD', '#DDDDDD', '#DDDDDD', '#DDDDDD',
+                  '#009988', '#009988',
+                  '#EE7733', '#EE7733',
+                  '#FDE7EF', '#FDE7EF', '#FDE7EF', '#FDE7EF',
+                  '#F589B1', '#F589B1', '#F589B1', '#F589B1',
+                  '#ED2B72', '#ED2B72', '#ED2B72', '#ED2B72',
+                  '#A50E45', '#A50E45', '#A50E45', '#A50E45',
+                  '#47061D', '#47061D', '#47061D', '#47061D',
+                  '#E5F6FF', '#E5F6FF', '#E5F6FF', '#E5F6FF',
+                  '#80D1FF', '#80D1FF', '#80D1FF', '#80D1FF',
+                  '#1AACFF', '#1AACFF', '#1AACFF', '#1AACFF',
+                  '#0072B3', '#0072B3', '#0072B3', '#0072B3',
+                  '#00314D', '#00314D', '#00314D', '#00314D']
+
+        links = [[0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8],
+                 [9, 10], [11, 12], [11, 23], [12, 24], [23, 24], [11, 13], [13, 15],
+                 [12, 14], [14, 16], [33, 34], [34, 35], [35, 36], [36, 37], [33, 38],
+                 [38, 39], [39, 40], [40, 41], [33, 42], [42, 43], [43, 44], [44, 45],
+                 [33, 46], [46, 47], [47, 48], [48, 49], [33, 50], [50, 51], [51, 52],
+                 [52, 53], [54, 55], [55, 56], [56, 57], [57, 58], [54, 59], [59, 60],
+                 [60, 61], [61, 62], [54, 63], [63, 64], [64, 65], [65, 66], [54, 67],
+                 [67, 68], [68, 69], [69, 70], [54, 71], [71, 72], [72, 73], [73, 74]]
+
+        # Seek to the desired frame
+        container.seek(framenum * (stream.time_base.denominator // stream.time_base.numerator))
+
+        for packet in container.demux(stream):
+            for frame in packet.decode():
+                # Convert frame to numpy array and BGR for OpenCV
+                img = frame.to_ndarray(format="bgr24")
+
+                # Access and draw 2D hand landmarks
+                if not np.isnan(data[cam, framenum, :, 0]).all():
+                    for number, link in enumerate(links):
+                        start, end = link
+                        if not np.isnan(data[cam, framenum, [start, end], 0]).any():
+                            posn_start = tuple(data[cam, framenum, start, :2].astype(int))
+                            posn_end = tuple(data[cam, framenum, end, :2].astype(int))
+                            cv.line(img, posn_start, posn_end, hex2bgr(colors[number]), 2)
+
+                    for landmark in range(21):
+                        if not np.isnan(data[cam, framenum, landmark, 0]):
+                            posn = tuple(data[cam, framenum, landmark, :2].astype(int))
+                            cv.circle(img, posn, 3, (0, 0, 0), thickness=1)
+
+                # Resize the frame and save image
+                resized_frame = cv.resize(img, (display_width, display_height))
+                save_dir = os.path.join(outdir_images_refined, trialname, f'cam{cam}')
+                save_path = os.path.join(save_dir, f'frame{framenum:04d}.png')
+                print(save_path)
+                cv.imwrite(save_path, resized_frame)
+                return  # Only process the first decoded frame for the given framenum
+
+    except Exception as e:
+        print(f"Error processing camera {cam}, frame {framenum}: {e}")
+    finally:
+        # Ensure the container is closed after processing
+        container.close()
+
+
+def visualizelabels(input_streams, data, display_width=450, display_height=360, outdir_images_refined='', trialname=''):
     """
     Draws 2D hand landmarks on videos.
-
     :param input_streams: List of videos
     :param data: 2D hand landmarks.
     """
+    nframes = data.shape[1]
 
-    # Create a list of cameras based on input_streams
-    caps = [cv.VideoCapture(stream) for stream in input_streams]
+    # Limit the max_workers to avoid too many open files
+    max_workers = min(len(input_streams), 8)  # Adjust based on system capacity
 
-    # Set camera resolution
-    for cap in caps:
-        width = int(cap.get(3))
-        height = int(cap.get(4))
-        cap.set(3, height)
-        cap.set(4, width)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for framenum in range(nframes):
+            for cam in range(len(input_streams)):
+                futures.append(executor.submit(
+                    process_camera,
+                    cam, input_streams[cam], data, display_width, display_height, outdir_images_refined, trialname,
+                    framenum
+                ))
 
-    # Creating links for each digit
-    colors = ['#009988', '#009988', '#009988', '#009988',
-              '#EE7733', '#EE7733', '#EE7733', '#EE7733',
-              '#DDDDDD', '#DDDDDD', '#DDDDDD', '#DDDDDD', '#DDDDDD',
-              '#009988', '#009988',
-              '#EE7733', '#EE7733',
-              '#FDE7EF', '#FDE7EF', '#FDE7EF', '#FDE7EF',
-              '#F589B1', '#F589B1', '#F589B1', '#F589B1',
-              '#ED2B72', '#ED2B72', '#ED2B72', '#ED2B72',
-              '#A50E45', '#A50E45', '#A50E45', '#A50E45',
-              '#47061D', '#47061D', '#47061D', '#47061D',
-              '#E5F6FF', '#E5F6FF', '#E5F6FF', '#E5F6FF',
-              '#80D1FF', '#80D1FF', '#80D1FF', '#80D1FF',
-              '#1AACFF', '#1AACFF', '#1AACFF', '#1AACFF',
-              '#0072B3', '#0072B3', '#0072B3', '#0072B3',
-              '#00314D', '#00314D', '#00314D', '#00314D']
-
-    links = [[0, 1], [1, 2], [2, 3], [3, 7],  # left face
-             [0, 4], [4, 5], [5, 6], [6, 8],  # right face
-             [9, 10], [11, 12], [11, 23], [12, 24], [23, 24],  # trunk
-             [11, 13], [13, 15],  # left arm
-             [12, 14], [14, 16],  # right arm
-             [33, 34], [34, 35], [35, 36], [36, 37],  # right thumb
-             [33, 38], [38, 39], [39, 40], [40, 41],
-             [33, 42], [42, 43], [43, 44], [44, 45],
-             [33, 46], [46, 47], [47, 48], [48, 49],
-             [33, 50], [50, 51], [51, 52], [52, 53],
-             [54, 55], [55, 56], [56, 57], [57, 58],  # left thumb
-             [54, 59], [59, 60], [60, 61], [61, 62],
-             [54, 63], [63, 64], [64, 65], [65, 66],
-             [54, 67], [67, 68], [68, 69], [69, 70],
-             [54, 71], [71, 72], [72, 73], [73, 74]]
-
-    # Initialize frame number
-    framenum = 0
-
-    while True:
-
-        # If frame number of video is more than frames of landmarks, quit
-        if framenum > data.shape[1]-1:
-            break
-
-        # Read frames from videos
-        frames = [cap.read() for cap in caps]
-
-        # If wasn't able to read, break
-        if not all(ret for ret, _ in frames):
-            break
-
-        # Convert frames from BGR to RGB
-        for cam, (_, frame) in enumerate(frames):
-            frames[cam] = (True, cv.cvtColor(frame, cv.COLOR_BGR2RGB))
-
-        # To improve performance, optionally mark the image as not writeable to pass by reference
-        for cam, (_, frame) in enumerate(frames):
-            frames[cam] = (True, frame.copy())
-            frame.flags.writeable = False
-
-        # Access 2D hand landmarks (pixel coordinates) if detected (otherwise [-1, -1])
-        for cam, (ret, frame) in enumerate(frames):
-
-            # Draw hand landmarks
-            frame.flags.writeable = True
-            frame = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
-
-            for number, link in enumerate(links):
-                start = link[0]
-                end = link[1]
-                if np.isnan(data[cam, framenum, start, 0]) or np.isnan(data[cam, framenum, end, 0]):
-                    continue
-                posn_start = (int(data[cam, framenum, start, 0]), int(data[cam, framenum, start, 1]))
-                posn_end = (int(data[cam, framenum, end, 0]), int(data[cam, framenum, end, 1]))
-                cv.line(frame, posn_start, posn_end, hex2bgr(colors[number]), 2)
-
-            for landmark in range(21):
-                if np.isnan(data[cam, framenum, landmark, 0]):
-                    continue
-                posn = (int(data[cam, framenum, landmark, 0]), int(data[cam, framenum, landmark, 1]))
-                cv.circle(frame, posn, 3, (0, 0, 0), thickness=1)
-
-            # Resize the frame
-            resized_frame = cv.resize(frame, (display_width, display_height))
-
-            # Display and save images
-            # cv.imshow(f'cam{cam}', resized_frame)
-            cv.imwrite(outdir_images_refined + trialname + '/cam' + str(cam) + '/' + 'frame' + f'{framenum:04d}' + '.png', resized_frame)
-
-        k = cv.waitKey(10)
-        if k & 0xFF == 27:  # ESC key
-            break
-
-        # Increment frame number
-        framenum += 1
-
-    # Clear windows
-    cv.destroyAllWindows()
-    for cap in caps:
-        cap.release()
+        # Wait for all threads to complete
+        for future in futures:
+            future.result()
 
 
 def visualize_3d(p3ds, save_path=None):
     """
-    Visualized 3D points in 3D space and saves images if filename given.
-
-    Code adapted from here: https://github.com/TemugeB/bodypose3d/blob/main/show_3d_pose.py
-
-    :param p3ds: 3D points
-    :param save_path: Filename of saved images.
+    Visualize 3D points in 3D space and saves images if filename given.
     """
-
     colours = ['#FDE7EF', '#FDE7EF', '#FDE7EF', '#FDE7EF',
                '#F589B1', '#F589B1', '#F589B1', '#F589B1',
                '#ED2B72', '#ED2B72', '#ED2B72', '#ED2B72',
@@ -448,47 +375,34 @@ def visualize_3d(p3ds, save_path=None):
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
+    ax.set_xlim3d([-400, 400])
+    ax.set_ylim3d([-400, 400])
+    ax.set_zlim3d([600, 1400])
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.view_init(-60, -50)
 
-    # plt.ion()
+    # Create line and scatter objects outside the loop
+    lines = [ax.plot([], [], [], linewidth=5, color=colours[i], alpha=0.7)[0] for i in range(len(links))]
+    scatter = ax.scatter([], [], [], marker='o', s=10, lw=1, c='white', edgecolors='black', alpha=0.7)
 
-    for framenum in range(nframes):
+    for framenum in range(len(p3ds)):
+        # Update lines for each link
+        for linknum, (link, line) in enumerate(zip(links, lines)):
+            line.set_data([p3ds[framenum, link[0], 0], p3ds[framenum, link[1], 0]],
+                          [p3ds[framenum, link[0], 1], p3ds[framenum, link[1], 1]])
+            line.set_3d_properties([p3ds[framenum, link[0], 2], p3ds[framenum, link[1], 2]])
 
-        # Skip frames
-        # if framenum % 2 == 0:
-        #     continue
-
-        for linknum, link in enumerate(links):
-            ax.plot(xs=[p3ds[framenum, link[0], 0], p3ds[framenum, link[1], 0]],
-                    ys=[p3ds[framenum, link[0], 1], p3ds[framenum, link[1], 1]],
-                    zs=[p3ds[framenum, link[0], 2], p3ds[framenum, link[1], 2]],
-                    linewidth=5, c=colours[linknum], alpha=0.7)
-
-        for i in range(33, 75):
-            ax.scatter(xs=p3ds[framenum, i:i + 1, 0], ys=p3ds[framenum, i:i + 1, 1], zs=p3ds[framenum, i:i + 1, 2],
-                       marker='o', s=10, lw=1, c='white', edgecolors='black', alpha=0.7)
-
-        # Axis ticks
-        # ax.set_xticks([])
-        # ax.set_yticks([])
-        # ax.set_zticks([])
-
-        # Axis limits and labels
-        ax.set_xlim3d([-400, 400])
-        ax.set_ylim3d([-400, 400])
-        ax.set_zlim3d([600, 1400])
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-        ax.view_init(-60, -50)
+        # Update scatter data for all points at once
+        scatter._offsets3d = (p3ds[framenum, 33:75, 0],
+                              p3ds[framenum, 33:75, 1],
+                              p3ds[framenum, 33:75, 2])
 
         if save_path is not None:
             plt.savefig(save_path.format(framenum), dpi=100)
         else:
-            plt.pause(0.1)
-        ax.cla()
-
-    if save_path is None:
-        plt.show()
+            plt.pause(0.01)
 
     plt.close(fig)
 
@@ -558,13 +472,7 @@ if __name__ == '__main__':
             os.makedirs(outdir_images_refined + trialname + '/cam' + str(cam), exist_ok=True)
 
         # Switch hands and smooth
-        data_2d_refined = switch_hands(data_2d_combined)
-        np.save(outdir_data2d + trialname + '/' + trialname + '_2Dlandmarksrefined', data_2d_refined)
-
-        data_2d = np.load(glob.glob(trial + '/*2Dlandmarksrefined.npy')[0]).astype(float)
-        nframes = np.shape(data_2d)[1]
-        nlandmarks = np.shape(data_2d)[2]
-        data_2d = data_2d.reshape((ncams, -1, 2))
+        data_2d = switch_hands(data_2d_combined).reshape((ncams, -1, 2))
 
         # Check # of cameras
         if ncams != data_2d.shape[0]:
@@ -604,7 +512,7 @@ if __name__ == '__main__':
         data3d = data3d.reshape((int(len(data3d) / nlandmarks), nlandmarks, 3))
 
         # Smooth
-        data3d = smooth3d(data3d, kernel=7, threshold_mm=20)
+        data3d = smooth3d(data3d, kernel=11)
 
         # Re-flatten
         data3d = data3d.reshape(-1, 3)
@@ -615,6 +523,8 @@ if __name__ == '__main__':
         for cam in range(ncams):
             data_2d_new[cam, :, :] = project_3d_to_2d(data3d_homogeneous.transpose(), cam_mats_intrinsic[cam], cam_mats_extrinsic[cam]).transpose()
         data_2d_new = data_2d_new.reshape((ncams, int(len(data3d) / nlandmarks), nlandmarks, 2))
+
+        np.save(outdir_data2d + trialname + '/' + trialname + '_2Dlandmarksrefined', data_2d_new)
 
         # Reshaping to nframes x nlandmarks x 3-dimension
         data3d = data3d.reshape((int(len(data3d) / nlandmarks), nlandmarks, 3))
@@ -628,23 +538,24 @@ if __name__ == '__main__':
         os.makedirs(outdir_images_trialfolder, exist_ok=True)
         os.makedirs(outdir_video_trialfolder, exist_ok=True)
 
-        # Output 3D visualizations
-        if gui_options['save_images_triangulation']:
-            print('Saving images.')
-            visualize_3d(data3d, save_path=outdir_images_trialfolder + 'frame_{:04d}.png')
-        if gui_options['save_video_triangulation']:
-            print('Saving video.')
-            createvideo(image_folder=outdir_images_trialfolder, extension='.png', fs=100,
-                        output_folder=outdir_video_trialfolder, video_name='data3d.mp4')
+        if False:
+            # Output 3D visualizations
+            if gui_options['save_images_triangulation']:
+                print('Saving images.')
+                visualize_3d(data3d, save_path=outdir_images_trialfolder + 'frame_{:04d}.png')
+            if gui_options['save_video_triangulation']:
+                print('Saving video.')
+                createvideo(image_folder=outdir_images_trialfolder, extension='.png', fs=100,
+                            output_folder=outdir_video_trialfolder, video_name='data3d.mp4')
 
 
         # Output visualizations
         vidnames = sorted(glob.glob(main_folder + '/videos/' + trialname + '/*.avi'))
-        if gui_options['save_images_refine']:
+        if gui_options['save_images_triangulation']:
             print('Saving refined images.')
-            visualizelabels(vidnames, data=data_2d_new)
+            visualizelabels(vidnames, outdir_images_refined=outdir_images_refined, trialname=trialname, data=data_2d_new)
 
-        if gui_options['save_video_refine']:
+        if gui_options['save_video_triangulation']:
             print('Saving refined videos.')
             for cam in range(ncams):
                 imagefolder = outdir_images_refined + trialname + '/cam' + str(cam)
