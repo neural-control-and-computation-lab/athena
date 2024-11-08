@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, Listbox, MULTIPLE, Toplevel, Scrollbar
 import glob
@@ -79,9 +78,6 @@ def select_folder_and_options():
         gui_options['save_video_mp'] = var_save_video_mp.get()
         gui_options['hand_confidence'] = slider_handconf.get()
         gui_options['pose_confidence'] = slider_poseconf.get()
-        gui_options['run_refine_labels'] = var_refine_labels.get()
-        gui_options['save_images_refine'] = var_save_images_refine.get()
-        gui_options['save_video_refine'] = var_save_video_refine.get()
         gui_options['run_triangulation'] = var_triangulation.get()
         gui_options['save_images_triangulation'] = var_save_images_triangulation.get()
         gui_options['save_video_triangulation'] = var_save_video_triangulation.get()
@@ -95,13 +91,10 @@ def select_folder_and_options():
             print('Running Mediapipe.')
             subprocess.run(['python', 'labels2d.py', gui_options_json])
 
-        if gui_options['run_refine_labels']:
-            print('Refining labels.')
-            subprocess.run(['python', 'labelsrefine.py', gui_options_json])
-
         if gui_options['run_triangulation']:
             print('Triangulating.')
-            subprocess.run(['python', 'triangulation.py', gui_options_json])
+            subprocess.run(['python', 'triangulaterefine.py', gui_options_json])
+
 
     def quit_application():
         root.quit()
@@ -112,7 +105,7 @@ def select_folder_and_options():
 
     gui_options = {}
 
-    window_width, window_height = 700, 750  # Adjusted height for quit button
+    window_width, window_height = 600, 650
     screen_width, screen_height = root.winfo_screenwidth(), root.winfo_screenheight()
     position_x, position_y = (screen_width - window_width) // 2, (screen_height - window_height) // 2
     root.geometry(f'{window_width}x{window_height}+{position_x}+{position_y}')
@@ -121,9 +114,6 @@ def select_folder_and_options():
     var_save_images_mp = tk.BooleanVar(value=False)
     var_save_video_mp = tk.BooleanVar(value=False)
     var_use_gpu = tk.BooleanVar(value=False)
-    var_refine_labels = tk.BooleanVar(value=True)
-    var_save_images_refine = tk.BooleanVar(value=False)
-    var_save_video_refine = tk.BooleanVar(value=False)
     var_triangulation = tk.BooleanVar(value=True)
     var_save_images_triangulation = tk.BooleanVar(value=False)
     var_save_video_triangulation = tk.BooleanVar(value=False)
@@ -171,15 +161,6 @@ def select_folder_and_options():
     slider_poseconf.grid(row=8, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
     slider_poseconf.set(0.9)
 
-    chk_run_refinelabels = tk.Checkbutton(root, text="Refine Labels", font=("Arial", 12, "bold"),
-                                          variable=var_refine_labels)
-    chk_run_refinelabels.grid(row=9, column=0, columnspan=2, padx=10, pady=(10, 0), sticky="w")
-
-    chk_save_images_refine = tk.Checkbutton(root, text="Save Images", variable=var_save_images_refine)
-    chk_save_images_refine.grid(row=10, column=0, padx=5, pady=5, sticky="w")
-    chk_save_video_refine = tk.Checkbutton(root, text="Save Video", variable=var_save_video_refine)
-    chk_save_video_refine.grid(row=10, column=1, padx=5, pady=5, sticky="w")
-
     chk_triangulation = tk.Checkbutton(root, text="Triangulation", font=("Arial", 12, "bold"),
                                        variable=var_triangulation)
     chk_triangulation.grid(row=11, column=0, columnspan=2, padx=10, pady=(10, 0), sticky="w")
@@ -206,4 +187,3 @@ def select_folder_and_options():
 
 if __name__ == '__main__':
     gui_options = select_folder_and_options()
-   
