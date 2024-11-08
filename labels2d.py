@@ -556,6 +556,15 @@ if __name__ == '__main__':
     # Create the main root window for progress (since the options window is closed)
     progress_root = tk.Tk()
     progress_root.title("Processing Progress")
+    progress_root.attributes("-topmost", True)
+
+    window_width = 500  # width of the window
+    window_height = 100  # Height of the window
+    screen_width = progress_root.winfo_screenwidth()
+    screen_height = progress_root.winfo_screenheight()
+    position_x = (screen_width - window_width) // 2
+    position_y = (screen_height - window_height) // 2
+    progress_root.geometry(f'{window_width}x{window_height}+{position_x}+{position_y}')
 
     # Add progress bar and FPS label to progress_root
     progress_var = tk.DoubleVar()
