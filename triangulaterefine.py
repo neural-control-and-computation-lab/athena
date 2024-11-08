@@ -72,29 +72,75 @@ def project_3d_to_2d(X_world, intrinsic_matrix, extrinsic_matrix):
     return np.array([u, v])
 
 
-def smooth3d(data3d, kernel=7, threshold_mm=1e10, sigma=1.):
+def calculate_bone_lengths(data3d, links):
     """
-    Applies a hybrid median-Gaussian filter to smooth 3D tracking data and uses spline fitting
-    to replace erratic points based on a dynamic threshold.
+    Calculate median bone lengths for each link.
     :param data3d: 3D data array [frames, landmarks, coordinates].
-    :param kernel: Kernel size for median filter.
-    :param threshold_mm: Threshold distance in millimeters for spline fitting in 3D space.
-    :param sigma: Sigma for Gaussian smoothing.
-    :return: Smoothed 3D data with spline fitting applied.
+    :param links: List of links defined as pairs of landmark indices.
+    :return: Dictionary of median lengths for each link.
     """
-    # Empty array for storing median filtered signal
-    data_3d_mfilt = np.empty(data3d.shape)
-
-    # Define nan-safe median filter
-    def nanmedian_filter(data, kernel_size):
-        return generic_filter(data, np.nanmedian, size=kernel_size, mode='nearest')
-
-    # Apply median filter across each coordinate
-    for coord in range(3):
-        data_3d_mfilt[:, :, coord] = nanmedian_filter(data3d[:, :, coord], kernel_size=kernel)
+    bone_lengths = {}
+    for link in links:
+        distances = np.linalg.norm(data3d[:, link[0], :] - data3d[:, link[1], :], axis=-1)
+        bone_lengths[tuple(link)] = np.nanmedian(distances)
+    return bone_lengths
 
 
-    return data_3d_mfilt
+def smooth3d(data3d, kernel=5, threshold_factor=0.1, max_bone_change=0.2):
+    """
+    Applies NaN-sensitive 3D median filtering with bone-length constraint.
+    Reverts changes that would alter bone lengths beyond a specified limit.
+    :param data3d: 3D data array [frames, landmarks, coordinates].
+    :param links: List of links defined as pairs of landmark indices.
+    :param kernel: Kernel size for NaN-sensitive 3D median filter.
+    :param threshold_factor: Factor for allowed deviation from the median bone length.
+    :param max_bone_change: Maximum allowable fractional change in bone length per link.
+    :return: Smoothed and adjusted 3D data.
+    """
+
+    links = [[33, 34], [34, 35], [35, 36], [36, 37],  # right thumb
+             [33, 38], [38, 39], [39, 40], [40, 41],
+             [33, 42], [42, 43], [43, 44], [44, 45],
+             [33, 46], [46, 47], [47, 48], [48, 49],
+             [33, 50], [50, 51], [51, 52], [52, 53],
+             [54, 55], [55, 56], [56, 57], [57, 58],  # left thumb
+             [54, 59], [59, 60], [60, 61], [61, 62],
+             [54, 63], [63, 64], [64, 65], [65, 66],
+             [54, 67], [67, 68], [68, 69], [69, 70],
+             [54, 71], [71, 72], [72, 73], [73, 74]]
+
+    # Calculate initial bone lengths for reference
+    bone_lengths = calculate_bone_lengths(data3d, links)
+
+    data3d_smoothed = data3d
+
+    # Apply bone-length constraints after filtering
+    for frame in range(data3d_smoothed.shape[0]):
+        for link in links:
+            p1, p2 = link
+            point1 = data3d_smoothed[frame, p1]
+            point2 = data3d_smoothed[frame, p2]
+            current_length = np.linalg.norm(point2 - point1)
+            target_length = bone_lengths[tuple(link)]
+
+            # Skip scaling if current_length is zero or invalid
+            if current_length == 0 or np.isnan(current_length) or target_length == 0:
+                continue
+
+            # Calculate deviation and scaling factor
+            deviation = current_length - target_length
+            if abs(deviation) > threshold_factor * target_length:
+                scaling_factor = target_length / current_length
+                midpoint = (point1 + point2) / 2
+
+                # Ensure scaling does not propagate NaNs or infinities
+                if not np.isnan(scaling_factor) and np.isfinite(scaling_factor):
+                    # Scale both points relative to the midpoint
+                    data3d_smoothed[frame, p1] = midpoint + (point1 - midpoint) * scaling_factor
+                    data3d_smoothed[frame, p2] = midpoint + (point2 - midpoint) * scaling_factor
+
+    return data3d_smoothed
+
 
 def switch_hands(data2d):
 
@@ -250,9 +296,9 @@ def switch_hands(data2d):
     return data_2d_switched
 
 
-def process_camera(cam, input_stream, data, display_width, display_height, outdir_images_refined, trialname, framenum):
+def process_camera(cam, input_stream, data, display_width, display_height, outdir_images_refined, trialname):
     """
-    Process a single camera stream for a given frame number, drawing 2D hand landmarks and saving images.
+    Process a single camera stream for all frames, drawing 2D hand landmarks and saving images.
     """
     try:
         # Open video stream with PyAV
@@ -285,16 +331,14 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
                  [60, 61], [61, 62], [54, 63], [63, 64], [64, 65], [65, 66], [54, 67],
                  [67, 68], [68, 69], [69, 70], [54, 71], [71, 72], [72, 73], [73, 74]]
 
-        # Seek to the desired frame
-        container.seek(framenum * (stream.time_base.denominator // stream.time_base.numerator))
-
-        for packet in container.demux(stream):
+        # Loop through all frames in the video
+        for framenum, packet in enumerate(container.demux(stream)):
             for frame in packet.decode():
                 # Convert frame to numpy array and BGR for OpenCV
                 img = frame.to_ndarray(format="bgr24")
 
-                # Access and draw 2D hand landmarks
-                if not np.isnan(data[cam, framenum, :, 0]).all():
+                # Draw landmarks if available for the current frame
+                if framenum < data.shape[1] and not np.isnan(data[cam, framenum, :, 0]).all():
                     for number, link in enumerate(links):
                         start, end = link
                         if not np.isnan(data[cam, framenum, [start, end], 0]).any():
@@ -307,13 +351,9 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
                             posn = tuple(data[cam, framenum, landmark, :2].astype(int))
                             cv.circle(img, posn, 3, (0, 0, 0), thickness=1)
 
-                # Resize the frame and save image
+                # Resize and save the processed frame
                 resized_frame = cv.resize(img, (display_width, display_height))
-                save_dir = os.path.join(outdir_images_refined, trialname, f'cam{cam}')
-                save_path = os.path.join(save_dir, f'frame{framenum:04d}.png')
-                print(save_path)
-                cv.imwrite(save_path, resized_frame)
-                return  # Only process the first decoded frame for the given framenum
+                cv.imwrite(f"{outdir_images_refined}{trialname}/cam{cam}/frame{framenum:04d}.png", resized_frame)
 
     except Exception as e:
         print(f"Error processing camera {cam}, frame {framenum}: {e}")
@@ -321,27 +361,22 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
         # Ensure the container is closed after processing
         container.close()
 
-
 def visualizelabels(input_streams, data, display_width=450, display_height=360, outdir_images_refined='', trialname=''):
     """
     Draws 2D hand landmarks on videos.
     :param input_streams: List of videos
     :param data: 2D hand landmarks.
     """
-    nframes = data.shape[1]
-
     # Limit the max_workers to avoid too many open files
     max_workers = min(len(input_streams), 8)  # Adjust based on system capacity
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = []
-        for framenum in range(nframes):
-            for cam in range(len(input_streams)):
-                futures.append(executor.submit(
-                    process_camera,
-                    cam, input_streams[cam], data, display_width, display_height, outdir_images_refined, trialname,
-                    framenum
-                ))
+        for cam in range(len(input_streams)):
+            futures.append(executor.submit(
+                process_camera,
+                cam, input_streams[cam], data, display_width, display_height, outdir_images_refined, trialname
+            ))
 
         # Wait for all threads to complete
         for future in futures:
@@ -512,7 +547,7 @@ if __name__ == '__main__':
         data3d = data3d.reshape((int(len(data3d) / nlandmarks), nlandmarks, 3))
 
         # Smooth
-        data3d = smooth3d(data3d, kernel=11)
+        data3d = smooth3d(data3d)
 
         # Re-flatten
         data3d = data3d.reshape(-1, 3)
@@ -538,16 +573,14 @@ if __name__ == '__main__':
         os.makedirs(outdir_images_trialfolder, exist_ok=True)
         os.makedirs(outdir_video_trialfolder, exist_ok=True)
 
-        if False:
-            # Output 3D visualizations
-            if gui_options['save_images_triangulation']:
-                print('Saving images.')
-                visualize_3d(data3d, save_path=outdir_images_trialfolder + 'frame_{:04d}.png')
-            if gui_options['save_video_triangulation']:
-                print('Saving video.')
-                createvideo(image_folder=outdir_images_trialfolder, extension='.png', fs=100,
-                            output_folder=outdir_video_trialfolder, video_name='data3d.mp4')
-
+        # Output 3D visualizations
+        if gui_options['save_images_triangulation']:
+            print('Saving images.')
+            visualize_3d(data3d, save_path=outdir_images_trialfolder + 'frame_{:04d}.png')
+        if gui_options['save_video_triangulation']:
+            print('Saving video.')
+            createvideo(image_folder=outdir_images_trialfolder, extension='.png', fs=100,
+                        output_folder=outdir_video_trialfolder, video_name='data3d.mp4')
 
         # Output visualizations
         vidnames = sorted(glob.glob(main_folder + '/videos/' + trialname + '/*.avi'))

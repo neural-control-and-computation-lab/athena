@@ -105,7 +105,7 @@ def select_folder_and_options():
 
     gui_options = {}
 
-    window_width, window_height = 700, 750  # Adjusted height for quit button
+    window_width, window_height = 600, 650
     screen_width, screen_height = root.winfo_screenwidth(), root.winfo_screenheight()
     position_x, position_y = (screen_width - window_width) // 2, (screen_height - window_height) // 2
     root.geometry(f'{window_width}x{window_height}+{position_x}+{position_y}')
