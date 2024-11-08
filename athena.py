@@ -206,4 +206,3 @@ def select_folder_and_options():
 
 if __name__ == '__main__':
     gui_options = select_folder_and_options()
-   
