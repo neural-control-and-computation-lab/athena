@@ -639,7 +639,7 @@ if __name__ == '__main__':
                 gui_options['save_video_mp'] = False  # Adjust the setting in gui_options
 
             # Gather camera calibration parameters
-            calfiles = glob.glob(os.path.join(main_folder, 'calibration', '*.yaml'))
+            calfiles = sorted(glob.glob(os.path.join(main_folder, 'calibration', '*.yaml')))
             cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
 
             total_trials = len(trialfolders)

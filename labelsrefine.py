@@ -403,7 +403,7 @@ if __name__ == '__main__':
     trials = sorted(trials)
 
     # Gather camera calibration parameters
-    calfiles = glob.glob(main_folder + '/calibration/*.yaml')
+    calfiles = sorted(glob.glob(main_folder + '/calibration/*.yaml'))
     cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
     cam_mats_extrinsic = np.array(cam_mats_extrinsic)
     ncams = len(calfiles)
