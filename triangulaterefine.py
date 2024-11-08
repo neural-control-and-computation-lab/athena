@@ -6,12 +6,12 @@ import json
 from labels2d import createvideo, readcalibration
 import numpy as np
 import os
-from scipy.interpolate import splev, splrep
-from scipy.ndimage import generic_filter, gaussian_filter1d
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import av
 from concurrent.futures import ThreadPoolExecutor
+from scipy.ndimage import gaussian_filter1d
+from scipy.signal import savgol_filter
 
 
 def undistort_points(points, matrix, dist):
@@ -86,18 +86,17 @@ def calculate_bone_lengths(data3d, links):
     return bone_lengths
 
 
-def smooth3d(data3d, kernel=5, threshold_factor=0.1, max_bone_change=0.2):
+def smooth3d(data3d, sigma=1, iterations=5, threshold_factor=0.1):
     """
-    Applies NaN-sensitive 3D median filtering with bone-length constraint.
-    Reverts changes that would alter bone lengths beyond a specified limit.
+    Applies iterative smoothing and bone-length constraint enforcement.
+
     :param data3d: 3D data array [frames, landmarks, coordinates].
-    :param links: List of links defined as pairs of landmark indices.
-    :param kernel: Kernel size for NaN-sensitive 3D median filter.
-    :param threshold_factor: Factor for allowed deviation from the median bone length.
-    :param max_bone_change: Maximum allowable fractional change in bone length per link.
+    :param sigma: Standard deviation for Gaussian kernel.
+    :param iterations: Number of smoothing and constraint enforcement iterations.
+    :param threshold_factor: Allowed deviation from the median bone length.
     :return: Smoothed and adjusted 3D data.
     """
-
+    # Define the bone links
     links = [[33, 34], [34, 35], [35, 36], [36, 37],  # right thumb
              [33, 38], [38, 39], [39, 40], [40, 41],
              [33, 42], [42, 43], [43, 44], [44, 45],
@@ -112,34 +111,62 @@ def smooth3d(data3d, kernel=5, threshold_factor=0.1, max_bone_change=0.2):
     # Calculate initial bone lengths for reference
     bone_lengths = calculate_bone_lengths(data3d, links)
 
-    data3d_smoothed = data3d
+    data3d_smoothed = data3d.copy()
 
-    # Apply bone-length constraints after filtering
-    for frame in range(data3d_smoothed.shape[0]):
-        for link in links:
-            p1, p2 = link
-            point1 = data3d_smoothed[frame, p1]
-            point2 = data3d_smoothed[frame, p2]
-            current_length = np.linalg.norm(point2 - point1)
-            target_length = bone_lengths[tuple(link)]
+    for it in range(iterations):
+        # Apply NaN-aware Gaussian smoothing over time
+        for coord in range(3):
+            data = data3d_smoothed[:, :, coord]
+            data3d_smoothed[:, :, coord] = nan_gaussian_filter1d(
+                data, sigma=sigma, axis=0)
 
-            # Skip scaling if current_length is zero or invalid
-            if current_length == 0 or np.isnan(current_length) or target_length == 0:
-                continue
+        # Enforce bone-length constraints
+        for frame in range(data3d_smoothed.shape[0]):
+            for link in links:
+                p1_idx, p2_idx = link
+                point1 = data3d_smoothed[frame, p1_idx]
+                point2 = data3d_smoothed[frame, p2_idx]
+                current_length = np.linalg.norm(point2 - point1)
+                target_length = bone_lengths[tuple(link)]
 
-            # Calculate deviation and scaling factor
-            deviation = current_length - target_length
-            if abs(deviation) > threshold_factor * target_length:
-                scaling_factor = target_length / current_length
-                midpoint = (point1 + point2) / 2
+                # Skip if invalid
+                if current_length == 0 or np.isnan(current_length) or target_length == 0:
+                    continue
 
-                # Ensure scaling does not propagate NaNs or infinities
-                if not np.isnan(scaling_factor) and np.isfinite(scaling_factor):
-                    # Scale both points relative to the midpoint
-                    data3d_smoothed[frame, p1] = midpoint + (point1 - midpoint) * scaling_factor
-                    data3d_smoothed[frame, p2] = midpoint + (point2 - midpoint) * scaling_factor
+                # Scale if deviation is beyond threshold
+                deviation = current_length - target_length
+                if abs(deviation) > threshold_factor * target_length:
+                    scaling_factor = target_length / current_length
+                    midpoint = (point1 + point2) / 2
+
+                    if not np.isnan(scaling_factor) and np.isfinite(scaling_factor):
+                        # Scale both points relative to the midpoint
+                        data3d_smoothed[frame, p1_idx] = midpoint + (point1 - midpoint) * scaling_factor
+                        data3d_smoothed[frame, p2_idx] = midpoint + (point2 - midpoint) * scaling_factor
 
     return data3d_smoothed
+
+def nan_gaussian_filter1d(arr, sigma, axis=0):
+    """
+    Apply Gaussian filter to an array with NaN values along a specified axis.
+
+    :param arr: Input array with NaNs.
+    :param sigma: Standard deviation for Gaussian kernel.
+    :param axis: Axis along which to apply the filter.
+    :return: Smoothed array.
+    """
+    # Create an array of weights where data is not NaN
+    weights = (~np.isnan(arr)).astype(float)
+    # Replace NaNs with zero for convolution
+    arr_filled = np.nan_to_num(arr)
+    # Apply Gaussian filter to the data and weights
+    filtered_data = gaussian_filter1d(arr_filled * weights, sigma=sigma, axis=axis, mode='nearest')
+    filtered_weights = gaussian_filter1d(weights, sigma=sigma, axis=axis, mode='nearest')
+    # Avoid division by zero
+    with np.errstate(invalid='ignore', divide='ignore'):
+        smoothed_arr = filtered_data / filtered_weights
+    smoothed_arr[filtered_weights == 0] = np.nan
+    return smoothed_arr
 
 
 def switch_hands(data2d):
