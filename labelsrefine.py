@@ -10,6 +10,7 @@ from scipy import signal
 import sys
 from tqdm import tqdm
 from triangulation import triangulate_simple, undistort_points
+from pathlib import Path
 
 
 def hex2bgr(hexcode):
@@ -265,7 +266,7 @@ def switch_hands(data2d):
 
     return data_2d_switched
 
-
+#TODO: parallelize visualize labels
 def visualizelabels(input_streams, data, display_width=450, display_height=360):
     """
     Draws 2D hand landmarks on videos.
@@ -392,28 +393,31 @@ if __name__ == '__main__':
     gui_options = json.loads(gui_options_json)
 
     # Open a dialog box to select participant's folder
-    idfolder = gui_options['idfolder']
+    idfolders = gui_options['idfolders']
+    main_folder = gui_options['main_folder']
 
     # Identify trials
-    trials = sorted(glob.glob(idfolder + '/landmarks/*'))
+    trials = []
+    for i in range(len(idfolders)):
+        trials.append(main_folder + '/landmarks/' + os.path.basename(idfolders[i]))
+    trials = sorted(trials)
 
     # Gather camera calibration parameters
-    calfiles = glob.glob(idfolder + '/calibration/*.yaml')
+    calfiles = glob.glob(main_folder + '/calibration/*.yaml')
     cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
     cam_mats_extrinsic = np.array(cam_mats_extrinsic)
     ncams = len(calfiles)
 
     # Output directories
-    outdir_images_refined = idfolder + '/imagesrefined/'
-    outdir_video = idfolder + '/videos_processed/'
-    outdir_data2d = idfolder + '/landmarks/'
+    outdir_images_refined = main_folder + '/imagesrefined/'
+    outdir_video = main_folder + '/videos_processed/'
+    outdir_data2d = main_folder + '/landmarks/'
 
     # Make output directories
     os.makedirs(outdir_images_refined, exist_ok=True)
     os.makedirs(outdir_video, exist_ok=True)
 
     for trial in tqdm(trials):
-
         # Identify trial name
         trialname = os.path.basename(trial)
         print(f"Processing trial: {trialname}")
@@ -450,7 +454,7 @@ if __name__ == '__main__':
         np.save(outdir_data2d + trialname + '/' + trialname + '_2Dlandmarksrefined', data_2d_refined)
 
         # Output visualizations
-        vidnames = sorted(glob.glob(idfolder + '/videos/' + trialname + '/*.avi'))
+        vidnames = sorted(glob.glob(main_folder + '/videos/' + trialname + '/*.avi'))
         if gui_options['save_images_refine']:
             print('Saving refined images.')
             visualizelabels(vidnames, data=data_2d_refined)

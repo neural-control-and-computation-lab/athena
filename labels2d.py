@@ -22,7 +22,6 @@ import time
 import tkinter as tk
 import tkinter.ttk as ttk  # For the progress bar
 
-
 def createvideo(image_folder, extension, fs, output_folder, video_name):
     """
     Compiling a set of images into a video in sequential order.
@@ -551,7 +550,8 @@ if __name__ == '__main__':
     gui_options = json.loads(gui_options_json)
 
     # Get the GUI options
-    idfolder = gui_options['idfolder']
+    idfolders = gui_options['idfolders']
+    main_folder = gui_options['main_folder']
 
     # Create the main root window for progress (since the options window is closed)
     progress_root = tk.Tk()
@@ -613,15 +613,14 @@ if __name__ == '__main__':
     update_progress.processing_done = False
 
     def process_videos():
-        if idfolder:
-            id = os.path.basename(os.path.normpath(idfolder))
+        if idfolders:
+            trialfolders = sorted(idfolders)
+            print(main_folder)
+            outdir_images = os.path.join(main_folder, 'images/')
+            outdir_video = os.path.join(main_folder, 'videos_processed/')
+            outdir_data2d = os.path.join(main_folder, 'landmarks/')
 
-            trialfolders = sorted(glob.glob(os.path.join(idfolder, 'videos/*Recording*')))
-            outdir_images = os.path.join(idfolder, 'images/')
-            outdir_video = os.path.join(idfolder, 'videos_processed/')
-            outdir_data2d = os.path.join(idfolder, 'landmarks/')
-
-            print(f"Selected Folder: {idfolder}")
+            print(f"Selected Folder: {main_folder}")
             print(f"Save Images: {gui_options['save_images_mp']}")
             print(f"Save Video: {gui_options['save_video_mp']}")
             print(f"Use GPU: {gui_options['use_gpu']}")
@@ -631,7 +630,7 @@ if __name__ == '__main__':
                 gui_options['save_video_mp'] = False  # Adjust the setting in gui_options
 
             # Gather camera calibration parameters
-            calfiles = glob.glob(os.path.join(idfolder, 'calibration', '*.yaml'))
+            calfiles = glob.glob(os.path.join(main_folder, 'calibration', '*.yaml'))
             cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
 
             total_trials = len(trialfolders)

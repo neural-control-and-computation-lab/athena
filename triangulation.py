@@ -141,28 +141,31 @@ if __name__ == '__main__':
     gui_options = json.loads(gui_options_json)
 
     # Open a dialog box to select participant's folder
-    idfolder = gui_options['idfolder']
+    idfolders = gui_options['idfolders']
+    main_folder = gui_options['main_folder']
 
     # Gather camera calibration parameters
-    calfiles = glob.glob(idfolder + '/calibration/*.yaml')
+    calfiles = glob.glob(main_folder + '/calibration/*.yaml')
     cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
     cam_mats_extrinsic = np.array(cam_mats_extrinsic)
     ncams = len(calfiles)
 
-    # Gather 2D data
-    trials = sorted(glob.glob(idfolder + '/landmarks/*'))
+    # Identify trials
+    trials = []
+    for i in range(len(idfolders)):
+        trials.append(main_folder + '/landmarks/' + os.path.basename(idfolders[i]))
+    trials = sorted(trials)
 
     # Output directories
-    outdir_images_refined = idfolder + '/imagesrefined/'
-    outdir_video = idfolder + '/videos_processed/'
-    outdir_data3d = idfolder + '/landmarks/'
+    outdir_images_refined = main_folder + '/imagesrefined/'
+    outdir_video = main_folder + '/videos_processed/'
+    outdir_data3d = main_folder + '/landmarks/'
 
     # Make output directories
     os.makedirs(outdir_images_refined, exist_ok=True)
     os.makedirs(outdir_video, exist_ok=True)
 
     for trial in tqdm(trials):
-
         # Identify trial name
         trialname = os.path.basename(trial)
         print(f"Processing trial: {trialname}")
