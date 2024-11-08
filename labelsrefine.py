@@ -6,12 +6,11 @@ from labels2d import createvideo, readcalibration
 import numpy as np
 import os
 from scipy.interpolate import splev, splrep
-from scipy import signal
+from scipy.ndimage import generic_filter, gaussian_filter1d
 import sys
 from tqdm import tqdm
 from triangulation import triangulate_simple, undistort_points
 import matplotlib.pyplot as plt
-
 
 
 def undistort_points(points, matrix, dist):
@@ -82,65 +81,67 @@ def project_3d_to_2d(X_world, intrinsic_matrix, extrinsic_matrix):
     return np.array([u, v])
 
 
-def smooth2d(data2d, kernel, pixeldif):
-    """
-    Applies a median filter to the data and calculates difference between original and filtered signal.
-    If difference between signals is beyond certain threshold, a spline is fit to the original data.
+import numpy as np
+from scipy.ndimage import generic_filter, gaussian_filter1d
+from scipy.interpolate import splrep, splev
 
-    Adapted from here:
-    https://github.com/lambdaloop/anipose/blob/master/anipose/filter_pose.py
-    :param data2d: 2D data.
-    :param kernel: kernel size for median filter.
-    :param pixeldif: Threshold length of pixels difference to warrant spline smooth.
-    :return: Spline fit 2D data.
-    """
 
+def smooth3d(data3d, kernel, threshold_mm, sigma=1.0):
+    """
+    Applies a hybrid median-Gaussian filter to smooth 3D tracking data and uses spline fitting
+    to replace erratic points based on a dynamic threshold.
+    :param data3d: 3D data array [frames, landmarks, coordinates].
+    :param kernel: Kernel size for median filter.
+    :param threshold_mm: Threshold distance in millimeters for spline fitting in 3D space.
+    :param sigma: Sigma for Gaussian smoothing.
+    :return: Smoothed 3D data with spline fitting applied.
+    """
     # Empty array for storing median filtered signal
-    data_2d_mfilt = np.empty(data2d.shape)
+    data_3d_mfilt = np.empty(data3d.shape)
 
-    # Applying median filter
-    for camera in range(ncams):
-        for landmark in range(21):
-            data_2d_mfilt[camera, :, landmark, 0] = signal.medfilt(data2d[camera, :, landmark, 0], kernel_size=kernel)
-            data_2d_mfilt[camera, :, landmark, 1] = signal.medfilt(data2d[camera, :, landmark, 1], kernel_size=kernel)
+    # Define nan-safe median filter
+    def nanmedian_filter(data, kernel_size):
+        return generic_filter(data, np.nanmedian, size=kernel_size, mode='nearest')
 
-    # Calculating difference between original and filtered signal
-    errx = data2d[:, :, :, 0] - data_2d_mfilt[:, :, :, 0]
-    erry = data2d[:, :, :, 1] - data_2d_mfilt[:, :, :, 1]
-    err = np.sqrt((errx ** 2) + (erry ** 2))
+    # Apply median filter across each coordinate
+    for coord in range(3):
+        data_3d_mfilt[:, :, coord] = nanmedian_filter(data3d[:, :, coord], kernel_size=kernel)
 
-    # Applying spline fit to replace extraneous data points
-    data_2d_spline = np.empty(data2d.shape)
+    # Smooth median-filtered signal with Gaussian filter
+    data_3d_mfilt = gaussian_filter1d(data_3d_mfilt, sigma=sigma, axis=0)
 
-    for camera in range(ncams):
-        for landmark in range(21):
-            x = data2d[camera, :, landmark, 0]
-            y = data2d[camera, :, landmark, 1]
-            err_sub = err[camera, :, landmark]
-            bad = np.zeros(err_sub.shape, dtype='bool')
-            bad[err_sub >= pixeldif] = True
+    def nan_helper(y):
+        nans = np.isnan(y)
+        return nans, lambda z: z.nonzero()[0]
 
-            # Ignore first and last few data points
-            bad[:kernel] = False
-            bad[-kernel:] = False
+    # Calculate difference in 3D space
+    err = np.sqrt(np.nansum((data3d - data_3d_mfilt) ** 2, axis=2))
 
-            pos = np.array([x, y]).T
-            posi = np.copy(pos)
-            posi[bad] = np.nan
+    # Apply spline fit to replace extraneous data points
+    data_3d_spline = np.copy(data3d)
+    for landmark in range(data3d.shape[1]):
+        err_sub = err[:, landmark]
 
-            for i in range(posi.shape[1]):
-                vals = posi[:, i]
-                nans, ix = nan_helper(vals)
+        # Calculate dynamic threshold based on local std deviation
+        local_threshold = np.nanstd(data_3d_mfilt[:, landmark, :]) * 1.5
+        bad = np.zeros(err_sub.shape, dtype=bool)
+        bad[err_sub >= (threshold_mm + local_threshold)] = True
+        bad[:kernel] = False
+        bad[-kernel:] = False
 
-                # More than 1 data point missing, more than 80% data there
-                if np.sum(nans) > 0 and np.mean(~nans) > 0.80:
-                    spline = splrep(ix(~nans), vals[~nans], k=3, s=0)
-                    vals[nans] = splev(ix(nans), spline)
+        # Spline fitting for each coordinate with guard bands
+        for coord in range(3):
+            pos = np.copy(data3d[:, landmark, coord])
+            pos[bad] = np.nan
 
-                data_2d_spline[camera, :, landmark, i] = vals
+            nans, ix = nan_helper(pos)
+            if np.sum(nans) > 0 and np.mean(~nans) > 0.80:
+                spline = splrep(ix(~nans), pos[~nans], k=3, s=0)
+                pos[nans] = splev(ix(nans), spline)
 
-    return data_2d_spline
+            data_3d_spline[:, landmark, coord] = pos
 
+    return data_3d_spline
 
 def switch_hands(data2d):
 
@@ -510,7 +511,7 @@ if __name__ == '__main__':
     trials = sorted(trials)
 
     # Gather camera calibration parameters
-    calfiles = glob.glob(main_folder + '/calibration/*.yaml')
+    calfiles = sorted(glob.glob(main_folder + '/calibration/*.yaml'))
     cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
     cam_mats_extrinsic = np.array(cam_mats_extrinsic)
     ncams = len(calfiles)
@@ -558,7 +559,6 @@ if __name__ == '__main__':
 
         # Switch hands and smooth
         data_2d_refined = switch_hands(data_2d_combined)
-        #data_2d_refined = smooth2d(data_2d_refined, kernel=7, pixeldif=20)
         np.save(outdir_data2d + trialname + '/' + trialname + '_2Dlandmarksrefined', data_2d_refined)
 
         data_2d = np.load(glob.glob(trial + '/*2Dlandmarksrefined.npy')[0]).astype(float)
@@ -600,6 +600,15 @@ if __name__ == '__main__':
             if np.sum(good) >= 2:
                 data3d[point] = triangulate_simple(subp[good], cam_mats_extrinsic[good])
 
+        # Reshaping to nframes x nlandmarks x 3-dimension
+        data3d = data3d.reshape((int(len(data3d) / nlandmarks), nlandmarks, 3))
+
+        # Smooth
+        data3d = smooth3d(data3d, kernel=7, threshold_mm=20)
+
+        # Re-flatten
+        data3d = data3d.reshape(-1, 3)
+
         # Project back to 2D
         data3d_homogeneous = np.hstack([data3d, np.ones((data3d.shape[0], 1))])
         data_2d_new = np.zeros((ncams, data3d.shape[0], 2))
@@ -633,7 +642,7 @@ if __name__ == '__main__':
         vidnames = sorted(glob.glob(main_folder + '/videos/' + trialname + '/*.avi'))
         if gui_options['save_images_refine']:
             print('Saving refined images.')
-            visualizelabels(vidnames, data=data_2d_refined)
+            visualizelabels(vidnames, data=data_2d_new)
 
         if gui_options['save_video_refine']:
             print('Saving refined videos.')
