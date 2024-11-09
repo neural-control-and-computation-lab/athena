@@ -1,10 +1,16 @@
-# Libraries
-import av
-import concurrent.futures
-import cv2 as cv
+import os
+import sys
 import glob
 import json
+import time
+import threading
+import tkinter as tk
+import tkinter.ttk as ttk  # For the progress bar
+import av
+import cv2 as cv
+import numpy as np
 import mediapipe as mp
+import concurrent.futures
 from mediapipe import solutions
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks.python import vision
@@ -15,41 +21,54 @@ from mediapipe.tasks.python.vision import (
     PoseLandmarkerOptions,
     RunningMode
 )
-import numpy as np
-import os
-import sys
-import time
-import tkinter as tk
-import tkinter.ttk as ttk  # For the progress bar
+from multiprocessing import Manager, set_start_method
 
-def createvideo(image_folder, extension, fs, output_folder, video_name):
+
+def createvideo(image_folder, extension, fps, output_folder, video_name):
     """
-    Compiling a set of images into a video in sequential order.
+    Compiles a set of images into a video in sequential order.
+
+    Parameters:
+        image_folder (str): The directory containing the images.
+        extension (str): The file extension of the images (e.g., '.png', '.jpg').
+        fps (float): Frames per second for the output video.
+        output_folder (str): The directory where the output video will be saved.
+        video_name (str): The filename of the output video.
+
+    Returns:
+        None
     """
     if not os.path.exists(output_folder):
-        os.mkdir(output_folder)
+        os.makedirs(output_folder, exist_ok=True)
 
     # Get the list of images and sort them by the frame number
     images = [img for img in os.listdir(image_folder) if img.endswith(extension)]
-
     if not images:
         print(f"No images found in {image_folder}.")
         return
 
-    # Sort the images based on their filenames (assuming they contain frame numbers)
     images.sort()
-
     # Read the first image to get the frame dimensions
-    frame = cv.imread(os.path.join(image_folder, images[0]))
+    first_frame_path = os.path.join(image_folder, images[0])
+    frame = cv.imread(first_frame_path)
+    if frame is None:
+        print(f"Failed to read the first image at {first_frame_path}.")
+        return
     height, width, layers = frame.shape
 
     # Set the codec and create the video writer
     fourcc = cv.VideoWriter_fourcc(*'mp4v')
-    video = cv.VideoWriter(os.path.join(output_folder, video_name), fourcc, fs, (width, height))
+    video_path = os.path.join(output_folder, video_name)
+    video = cv.VideoWriter(video_path, fourcc, fps, (width, height))
 
     # Write each image to the video file
-    for image in images:
-        video.write(cv.imread(os.path.join(image_folder, image)))
+    for image_name in images:
+        image_path = os.path.join(image_folder, image_name)
+        frame = cv.imread(image_path)
+        if frame is None:
+            print(f"Warning: Could not read image {image_path}. Skipping.")
+            continue
+        video.write(frame)
 
     # Release the video writer
     video.release()
@@ -57,84 +76,122 @@ def createvideo(image_folder, extension, fs, output_folder, video_name):
 
 
 def draw_pose_landmarks_on_image(rgb_image, detection_result):
+    """
+    Draws pose landmarks on an image.
+
+    Parameters:
+        rgb_image (np.ndarray): The input RGB image.
+        detection_result (PoseLandmarkerResult): The result object containing pose landmarks.
+
+    Returns:
+        np.ndarray: The image with pose landmarks drawn.
+    """
     pose_landmarks_list = detection_result.pose_landmarks
     annotated_image = np.copy(rgb_image)
 
     # Loop through the detected poses to visualize.
-    for idx in range(len(pose_landmarks_list)):
-        pose_landmarks = pose_landmarks_list[idx]
-
-        # Draw the pose landmarks.
+    for pose_landmarks in pose_landmarks_list:
+        # Convert pose landmarks to protobuf format for drawing
         pose_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
         pose_landmarks_proto.landmark.extend([
-          landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in pose_landmarks
+            landmark_pb2.NormalizedLandmark(
+                x=landmark.x, y=landmark.y, z=landmark.z
+            ) for landmark in pose_landmarks
         ])
+
+        # Draw the pose landmarks on the image
         solutions.drawing_utils.draw_landmarks(
-          annotated_image,
-          pose_landmarks_proto,
-          solutions.pose.POSE_CONNECTIONS,
-          solutions.drawing_styles.get_default_pose_landmarks_style())
+            annotated_image,
+            pose_landmarks_proto,
+            solutions.pose.POSE_CONNECTIONS,
+            solutions.drawing_styles.get_default_pose_landmarks_style()
+        )
     return annotated_image
 
 
 def draw_hand_landmarks_on_image(rgb_image, detection_result):
+    """
+    Draws hand landmarks and handedness on an image.
+
+    Parameters:
+        rgb_image (np.ndarray): The input RGB image.
+        detection_result (HandLandmarkerResult): The result object containing hand landmarks and handedness.
+
+    Returns:
+        np.ndarray: The image with hand landmarks and handedness drawn.
+    """
     MARGIN = 20  # pixels
     FONT_SIZE = 3
     FONT_THICKNESS = 2
-    HANDEDNESS_TEXT_COLOR = (88, 205, 54)  # vibrant green
+    HANDEDNESS_TEXT_COLOR = (88, 205, 54)  # Vibrant green
 
     hand_landmarks_list = detection_result.hand_landmarks
     handedness_list = detection_result.handedness
     annotated_image = np.copy(rgb_image)
 
     # Loop through the detected hands to visualize both
-    for idx in range(len(hand_landmarks_list)):
-        hand_landmarks = hand_landmarks_list[idx]
-        handedness = handedness_list[idx][0]  # Access the first item in the handedness list
+    for hand_landmarks, handedness in zip(hand_landmarks_list, handedness_list):
+        handedness = handedness[0]  # Access the first item in the handedness list
 
-        # Draw the hand landmarks.
+        # Convert hand landmarks to protobuf format for drawing
         hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
         hand_landmarks_proto.landmark.extend([
-            landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in hand_landmarks
+            landmark_pb2.NormalizedLandmark(
+                x=landmark.x, y=landmark.y, z=landmark.z
+            ) for landmark in hand_landmarks
         ])
+
+        # Draw the hand landmarks
         solutions.drawing_utils.draw_landmarks(
             annotated_image,
             hand_landmarks_proto,
             solutions.hands.HAND_CONNECTIONS,
             solutions.drawing_styles.get_default_hand_landmarks_style(),
-            solutions.drawing_styles.get_default_hand_connections_style())
+            solutions.drawing_styles.get_default_hand_connections_style()
+        )
 
-        # Get the top left corner of the detected hand's bounding box.
+        # Get the top-left corner of the detected hand's bounding box
         height, width, _ = annotated_image.shape
         x_coordinates = [landmark.x for landmark in hand_landmarks]
         y_coordinates = [landmark.y for landmark in hand_landmarks]
         text_x = int(min(x_coordinates) * width)
         text_y = int(min(y_coordinates) * height) - MARGIN
 
-        # Draw handedness (left or right hand) on the image.
-        cv.putText(annotated_image, f"{handedness.category_name}",
-                   (text_x, text_y), cv.FONT_HERSHEY_DUPLEX,
-                   FONT_SIZE, HANDEDNESS_TEXT_COLOR, FONT_THICKNESS, cv.LINE_AA)
+        # Draw handedness (left or right hand) on the image
+        cv.putText(
+            annotated_image,
+            f"{handedness.category_name}",
+            (text_x, text_y),
+            cv.FONT_HERSHEY_DUPLEX,
+            FONT_SIZE,
+            HANDEDNESS_TEXT_COLOR,
+            FONT_THICKNESS,
+            cv.LINE_AA
+        )
 
     return annotated_image
 
 
-def readcalibration(calfilepathway):
+def readcalibration(calibration_files):
     """
-    Outputs camera calibration parameters.
+    Reads camera calibration parameters from YAML files.
 
-    :param calibrationfiles: Pathway containing camera calibration parameters within individual yaml files.
-    :return: Extrinsic, intrinsic and distortion coefficients.
+    Parameters:
+        calibration_files (list of str): List of file paths to the camera calibration YAML files.
+
+    Returns:
+        tuple: A tuple containing:
+            - extrinsics (list of np.ndarray): List of 4x4 extrinsic matrices for each camera.
+            - intrinsics (list of np.ndarray): List of 3x3 intrinsic matrices for each camera.
+            - dist_coeffs (list of np.ndarray): List of distortion coefficients for each camera.
     """
-
     extrinsics = []
     intrinsics = []
     dist_coeffs = []
 
-    for cam in range(len(calfilepathway)):
-
+    for cam_file in calibration_files:
         # Grab camera calibration parameters
-        cam_yaml = cv.FileStorage(calfilepathway[cam], cv.FILE_STORAGE_READ)
+        cam_yaml = cv.FileStorage(cam_file, cv.FILE_STORAGE_READ)
         cam_int = cam_yaml.getNode("intrinsicMatrix").mat()
         cam_dist = cam_yaml.getNode("distortionCoefficients").mat()
         cam_rotn = cam_yaml.getNode("R").mat().transpose()
@@ -151,13 +208,15 @@ def readcalibration(calfilepathway):
 
 def transformationmatrix(R, t):
     """
-    Create a 4x4 transformation matrix based on a rotation vector and translation vector.
+    Creates a 4x4 homogeneous transformation matrix from rotation and translation.
 
-    :param R: 3x3 rotation matrix.
-    :param t: translation vector.
-    :return: 4x4 transformation matrix.
+    Parameters:
+        R (np.ndarray): 3x3 rotation matrix.
+        t (np.ndarray): 3-element translation vector.
+
+    Returns:
+        np.ndarray: 4x4 homogeneous transformation matrix.
     """
-
     T = np.concatenate((R, t.reshape(3, 1)), axis=1)
     T = np.vstack((T, [0, 0, 0, 1]))
     return T
@@ -168,19 +227,19 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
     """
     Processes a single camera stream and saves keypoints directly to disk.
 
-    Args:
+    Parameters:
         cam (int): Camera index.
         input_stream (str): Path to the input video file.
         gui_options (dict): Dictionary containing GUI options and settings.
-        cam_mats_intrinsic (list): List of intrinsic camera matrices.
-        cam_dist_coeffs (list): List of camera distortion coefficients.
-        undistort_map (tuple): Precomputed undistortion maps for the camera.
+        cam_mats_intrinsic (list of np.ndarray): List of intrinsic camera matrices.
+        cam_dist_coeffs (list of np.ndarray): List of camera distortion coefficients.
+        undistort_map (tuple): Precomputed undistortion maps for the camera (map1, map2).
         display_width (int): Width for displaying frames.
         display_height (int): Height for displaying frames.
-        progress_queue (multiprocessing.Manager().Queue): Queue for communicating progress.
+        progress_queue (multiprocessing.Queue): Queue for communicating progress.
 
     Returns:
-        int: Camera index.
+        int: The camera index.
     """
     print(f"Starting processing for camera {cam}")
 
@@ -216,8 +275,8 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
     handscore = []
 
     # Load HandLandmarker and PoseLandmarker models
-    hand_model_path = 'hand_landmarker.task'
-    pose_model_path = 'pose_landmarker_full.task'
+    hand_model_path = 'models/hand_landmarker.task'
+    pose_model_path = 'models/pose_landmarker_full.task'
 
     # Set GPU delegate based on user selection
     delegate = mp.tasks.BaseOptions.Delegate.GPU if use_gpu else mp.tasks.BaseOptions.Delegate.CPU
@@ -225,13 +284,17 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
     hand_options = HandLandmarkerOptions(
         base_options=mp.tasks.BaseOptions(model_asset_path=hand_model_path, delegate=delegate),
         running_mode=RunningMode.VIDEO,
-        num_hands=2, min_hand_detection_confidence=hand_confidence,
-        min_hand_presence_confidence=hand_confidence, min_tracking_confidence=hand_confidence
+        num_hands=2,
+        min_hand_detection_confidence=hand_confidence,
+        min_hand_presence_confidence=hand_confidence,
+        min_tracking_confidence=hand_confidence
     )
     pose_options = PoseLandmarkerOptions(
         base_options=mp.tasks.BaseOptions(model_asset_path=pose_model_path, delegate=delegate),
-        running_mode=RunningMode.VIDEO, min_pose_detection_confidence=pose_confidence,
-        min_pose_presence_confidence=pose_confidence, min_tracking_confidence=pose_confidence
+        running_mode=RunningMode.VIDEO,
+        min_pose_detection_confidence=pose_confidence,
+        min_pose_presence_confidence=pose_confidence,
+        min_tracking_confidence=pose_confidence
     )
 
     # Create PyAV container and video stream
@@ -284,7 +347,10 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
 
         # Convert to RGBA if using GPU
         if use_gpu:
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGBA, data=cv.cvtColor(frame_array, cv.COLOR_RGB2RGBA))
+            mp_image = mp.Image(
+                image_format=mp.ImageFormat.SRGBA,
+                data=cv.cvtColor(frame_array, cv.COLOR_RGB2RGBA)
+            )
         else:
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_array)
 
@@ -319,33 +385,44 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
 
         if hand_results.hand_landmarks:
             for hand_landmarks, hand_world_landmarks, handedness_list in zip(
-                    hand_results.hand_landmarks, hand_results.hand_world_landmarks, hand_results.handedness):
+                hand_results.hand_landmarks,
+                hand_results.hand_world_landmarks,
+                hand_results.handedness
+            ):
                 handedness = handedness_list[0]
 
                 # Process Left and Right hands separately
                 if handedness.category_name == 'Left':
-                    frame_keypoints_l = [[int(frame_array.shape[1] * hand_landmark.x),
-                                          int(frame_array.shape[0] * hand_landmark.y),
-                                          hand_landmark.z,
-                                          hand_landmark.visibility, hand_landmark.presence] for hand_landmark in
-                                         hand_landmarks]
-                    frame_keypoints_l_world = [[hand_world_landmark.x,
-                                                hand_world_landmark.y,
-                                                hand_world_landmark.z,
-                                                hand_world_landmark.visibility, hand_world_landmark.presence] for hand_world_landmark in
-                                               hand_world_landmarks]
+                    frame_keypoints_l = [[
+                        int(frame_array.shape[1] * hand_landmark.x),
+                        int(frame_array.shape[0] * hand_landmark.y),
+                        hand_landmark.z,
+                        hand_landmark.visibility,
+                        hand_landmark.presence
+                    ] for hand_landmark in hand_landmarks]
+                    frame_keypoints_l_world = [[
+                        hand_world_landmark.x,
+                        hand_world_landmark.y,
+                        hand_world_landmark.z,
+                        hand_world_landmark.visibility,
+                        hand_world_landmark.presence
+                    ] for hand_world_landmark in hand_world_landmarks]
                     frame_handscore[0] = handedness.score
                 else:
-                    frame_keypoints_r = [[int(frame_array.shape[1] * hand_landmark.x),
-                                          int(frame_array.shape[0] * hand_landmark.y),
-                                          hand_landmark.z,
-                                          hand_landmark.visibility, hand_landmark.presence] for hand_landmark in
-                                         hand_landmarks]
-                    frame_keypoints_r_world = [[hand_world_landmark.x,
-                                                hand_world_landmark.y,
-                                                hand_world_landmark.z,
-                                                hand_world_landmark.visibility, hand_world_landmark.presence] for hand_world_landmark in
-                                               hand_world_landmarks]
+                    frame_keypoints_r = [[
+                        int(frame_array.shape[1] * hand_landmark.x),
+                        int(frame_array.shape[0] * hand_landmark.y),
+                        hand_landmark.z,
+                        hand_landmark.visibility,
+                        hand_landmark.presence
+                    ] for hand_landmark in hand_landmarks]
+                    frame_keypoints_r_world = [[
+                        hand_world_landmark.x,
+                        hand_world_landmark.y,
+                        hand_world_landmark.z,
+                        hand_world_landmark.visibility,
+                        hand_world_landmark.presence
+                    ] for hand_world_landmark in hand_world_landmarks]
                     frame_handscore[1] = handedness.score
 
                 # Draw hand landmarks on the image
@@ -356,17 +433,23 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
         frame_keypoints_body_world = []
         if pose_results.pose_landmarks:
             for pose_landmarks, pose_world_landmarks in zip(
-                    pose_results.pose_landmarks, pose_results.pose_world_landmarks):
-                frame_keypoints_body = [[int(body_landmark.x * frame_array.shape[1]),
-                                         int(body_landmark.y * frame_array.shape[0]),
-                                         body_landmark.z,
-                                         body_landmark.visibility, body_landmark.presence] for body_landmark in
-                                        pose_landmarks]
-                frame_keypoints_body_world = [[body_world_landmark.x,
-                                               body_world_landmark.y,
-                                               body_world_landmark.z,
-                                               body_world_landmark.visibility, body_world_landmark.presence] for body_world_landmark in
-                                              pose_world_landmarks]
+                pose_results.pose_landmarks,
+                pose_results.pose_world_landmarks
+            ):
+                frame_keypoints_body = [[
+                    int(body_landmark.x * frame_array.shape[1]),
+                    int(body_landmark.y * frame_array.shape[0]),
+                    body_landmark.z,
+                    body_landmark.visibility,
+                    body_landmark.presence
+                ] for body_landmark in pose_landmarks]
+                frame_keypoints_body_world = [[
+                    body_world_landmark.x,
+                    body_world_landmark.y,
+                    body_world_landmark.z,
+                    body_world_landmark.visibility,
+                    body_world_landmark.presence
+                ] for body_world_landmark in pose_world_landmarks]
 
                 # Draw pose landmarks on the image
                 frame_array = draw_pose_landmarks_on_image(frame_array, pose_results)
@@ -381,7 +464,8 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
         if len(frame_keypoints_body) < num_body_keypoints:
             frame_keypoints_body += [[-1, -1, -1, -1, -1]] * (num_body_keypoints - len(frame_keypoints_body))
             frame_keypoints_body_world += [[-1, -1, -1, -1, -1]] * (
-                    num_body_keypoints - len(frame_keypoints_body_world))
+                num_body_keypoints - len(frame_keypoints_body_world)
+            )
 
         # Append keypoints
         kpts_cam_l.append(frame_keypoints_l)
@@ -399,7 +483,7 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
 
         # Save images if needed
         if save_images:
-            save_path = f'{outdir_images_trial}/cam{cam}/frame{framenum:04d}.png'
+            save_path = os.path.join(outdir_images_trial, f'cam{cam}', f'frame{framenum:04d}.png')
             result = cv.imwrite(save_path, cv.cvtColor(resized_frame, cv.COLOR_RGB2BGR))
             if not result:
                 print(f"Failed to save frame {framenum:04d} for cam {cam} at {save_path}")
@@ -408,7 +492,7 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
         framenum += 1
         frames_since_last_fps += 1
 
-        # Send progress update every N frames (e.g., every 10 frames)
+        # Send progress update every N frames
         if framenum % 10 == 0 or framenum == max_frames:
             progress = (framenum / max_frames) * 100
             progress_queue.put({'cam': cam, 'progress': progress})
@@ -446,36 +530,32 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
     pose_landmarker.close()
     container.close()
 
-    # Optionally, send a completion message for this camera
+    # Send a completion message for this camera
     progress_queue.put({'cam': cam, 'done': True})
 
-    # Return only the camera index to the main process
     return cam
 
 
 def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeffs, outdir_images_trial,
-                  outdir_data2d_trial, trialname,
-                  display_width=450, display_height=360, progress_queue=None):
+                  outdir_data2d_trial, trialname, display_width=450, display_height=360, progress_queue=None):
     """
     Processes multiple camera streams in parallel using multiprocessing.
 
-    Args:
+    Parameters:
         input_streams (list): List of input video file paths.
         gui_options (dict): Dictionary containing GUI options and settings.
-        cam_mats_intrinsic (list): List of intrinsic camera matrices.
-        cam_dist_coeffs (list): List of camera distortion coefficients.
+        cam_mats_intrinsic (list of np.ndarray): List of intrinsic camera matrices.
+        cam_dist_coeffs (list of np.ndarray): List of camera distortion coefficients.
         outdir_images_trial (str): Output directory for images.
         outdir_data2d_trial (str): Output directory for data.
         trialname (str): Name of the trial.
-        display_width (int): Width for displaying frames.
-        display_height (int): Height for displaying frames.
-        progress_queue (multiprocessing.Manager().Queue): Queue for communicating progress.
+        display_width (int, optional): Width for displaying frames. Defaults to 450.
+        display_height (int, optional): Height for displaying frames. Defaults to 360.
+        progress_queue (multiprocessing.Queue, optional): Queue for communicating progress.
 
     Returns:
         None
     """
-    import multiprocessing
-
     num_processes = gui_options.get('num_processes', os.cpu_count())
 
     # Precompute undistortion maps
@@ -491,8 +571,13 @@ def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeff
                 frame_height, frame_width = frame_array.shape[:2]
                 # Set up undistort maps
                 map1, map2 = cv.initUndistortRectifyMap(
-                    cam_mats_intrinsic[cam], cam_dist_coeffs[cam], None, cam_mats_intrinsic[cam],
-                    (frame_width, frame_height), cv.CV_16SC2)
+                    cam_mats_intrinsic[cam],
+                    cam_dist_coeffs[cam],
+                    None,
+                    cam_mats_intrinsic[cam],
+                    (frame_width, frame_height),
+                    cv.CV_16SC2
+                )
                 undistort_maps.append((map1, map2))
                 break  # Only need one frame
             break  # Only need one packet
@@ -534,14 +619,8 @@ def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeff
             cam = future.result()
             print(f"Camera {cam} processing complete.")
 
-    # Since data is saved within each process, no need to return any data
-    # Optionally, if you need to perform any post-processing, you can do it here
-
 
 if __name__ == '__main__':
-    import threading
-    from multiprocessing import Manager, set_start_method
-
     # Set the multiprocessing start method to 'spawn'
     set_start_method('spawn')
 
@@ -553,12 +632,12 @@ if __name__ == '__main__':
     idfolders = gui_options['idfolders']
     main_folder = gui_options['main_folder']
 
-    # Create the main root window for progress (since the options window is closed)
+    # Create the main root window for progress
     progress_root = tk.Tk()
     progress_root.title("Processing Progress")
     progress_root.attributes("-topmost", True)
 
-    window_width = 500  # width of the window
+    window_width = 500  # Width of the window
     window_height = 100  # Height of the window
     screen_width = progress_root.winfo_screenwidth()
     screen_height = progress_root.winfo_screenheight()
@@ -568,8 +647,13 @@ if __name__ == '__main__':
 
     # Add progress bar and FPS label to progress_root
     progress_var = tk.DoubleVar()
-    progress_bar = ttk.Progressbar(progress_root, orient="horizontal", mode="determinate",
-                                   variable=progress_var, maximum=100)
+    progress_bar = ttk.Progressbar(
+        progress_root,
+        orient="horizontal",
+        mode="determinate",
+        variable=progress_var,
+        maximum=100
+    )
     progress_bar.pack(pady=10, padx=10, fill=tk.X)
 
     fps_value = tk.DoubleVar()
@@ -583,6 +667,9 @@ if __name__ == '__main__':
     cam_fps = manager.dict()       # For tracking FPS per camera
 
     def update_progress():
+        """
+        Updates the progress bar and FPS label based on messages from the progress queue.
+        """
         try:
             # Try to get messages from the queue without blocking
             while not progress_queue.empty():
@@ -618,13 +705,16 @@ if __name__ == '__main__':
         else:
             # All processing is done, and the queue is empty; now we can quit
             progress_root.quit()
+
     # Initialize the processing_done flag
     update_progress.processing_done = False
 
     def process_videos():
+        """
+        Processes the videos for each trial and updates the progress queue.
+        """
         if idfolders:
             trialfolders = sorted(idfolders)
-            print(main_folder)
             outdir_images = os.path.join(main_folder, 'images/')
             outdir_video = os.path.join(main_folder, 'videos_processed/')
             outdir_data2d = os.path.join(main_folder, 'landmarks/')
@@ -692,8 +782,13 @@ if __name__ == '__main__':
                     os.makedirs(outdir_video_trial, exist_ok=True)
                     for cam in range(ncams):
                         imagefolder = os.path.join(outdir_images_trial, f'cam{cam}')
-                        createvideo(image_folder=imagefolder, extension='.png', fs=fps,
-                                    output_folder=outdir_video_trial, video_name=f'cam{cam}.mp4')
+                        createvideo(
+                            image_folder=imagefolder,
+                            extension='.png',
+                            fps=fps,
+                            output_folder=outdir_video_trial,
+                            video_name=f'cam{cam}.mp4'
+                        )
 
                 # Update progress per trial
                 processed_trials += 1

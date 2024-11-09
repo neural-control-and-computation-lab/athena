@@ -1,56 +1,80 @@
-# Libraries
 import json
 import os
-from pathlib import Path
+import glob
 import subprocess
 import tkinter as tk
 from tkinter import filedialog, messagebox, Listbox, MULTIPLE, Toplevel, Scrollbar
-import glob
+from pathlib import Path
 
 
 def select_folder_and_options():
     """
-    Create GUI to select folder and set options for processing.
-    """
-    # Initialize nonlocal variables in outer scope
-    idfolders = []
-    main_folder = None
-    num_cameras = 0
+    Launches a GUI for selecting the main folder and setting processing options.
 
-    # Select Folder
+    This function creates a Tkinter GUI that allows the user to:
+    - Select the main folder containing video data and calibration files.
+    - Choose specific recordings (subfolders) to process.
+    - Adjust processing settings such as fraction of frames to process,
+      number of parallel processes, GPU usage, and confidence thresholds.
+    - Decide whether to run Mediapipe and/or triangulation steps.
+    - Choose whether to save images and videos at different stages.
+    - Start the processing by running the appropriate scripts with the selected options.
+
+    Returns:
+        dict: A dictionary containing all the selected options.
+    """
+    # Initialize variables accessible within nested functions
+    idfolders = []       # List of selected recording folders
+    main_folder = None   # Path to the main folder
+    num_cameras = 0      # Number of cameras determined from calibration files
+
     def select_folder():
+        """
+        Opens a dialog to select the main folder and allows selection of recordings.
+
+        This function updates the 'main_folder', 'num_cameras', and 'idfolders' variables.
+        It adjusts the number of processes based on the number of cameras and displays
+        a secondary window for selecting specific recordings to process.
+        """
         nonlocal main_folder
-        main_folder = filedialog.askdirectory(initialdir=str(Path(os.getcwd())))
+        main_folder = filedialog.askdirectory(
+            initialdir=str(Path(os.getcwd())),
+            title="Select Main Folder"
+        )
         if not main_folder:
             return  # Exit if no folder is selected
 
-        # Check number of cameras
+        # Update the number of cameras based on calibration files
         nonlocal num_cameras
         num_cameras = len(glob.glob(os.path.join(main_folder, 'calibration', '*.yaml')))
 
-        # Update the scale range for num_processes_scale based on num_cameras
+        # Adjust the number of processes based on the number of cameras
         max_processes = min(os.cpu_count(), num_cameras)
         num_processes_scale.configure(to=max_processes)
-        num_processes_scale.set(max_processes)  # Set default to max_processes
+        num_processes_scale.set(max_processes)
 
+        # Get the list of subfolders (recordings) in the videos directory
         videos_folder = Path(main_folder) / 'videos'
         subfolders = [f.name for f in videos_folder.iterdir() if f.is_dir()]
 
-        # Create the subfolder selection window
+        # Create a new window for selecting recordings
         subfolder_window = Toplevel(root)
         subfolder_window.title("Select Recordings")
 
-        # Calculate position for subfolder_window
+        # Position the subfolder window next to the main window
         main_x, main_y = root.winfo_x(), root.winfo_y()
         main_width = root.winfo_width()
         subfolder_window.geometry(f"+{main_x + main_width + 10}+{main_y}")
 
+        # Update the folder label in the main window
         folder_label.config(text="Selected Folder: " + str(main_folder))
 
+        # Create a Listbox for selecting subfolders
         listbox = Listbox(subfolder_window, selectmode=MULTIPLE)
         for folder in subfolders:
             listbox.insert("end", folder)
 
+        # Add a scrollbar to the Listbox
         scrollbar = Scrollbar(subfolder_window)
         scrollbar.pack(side="right", fill="y")
         listbox.config(yscrollcommand=scrollbar.set)
@@ -58,16 +82,26 @@ def select_folder_and_options():
         listbox.pack()
 
         def save_selection():
+            """
+            Saves the selected subfolders to 'idfolders' and closes the selection window.
+            """
             selected_indices = listbox.curselection()
-            # Update the outer scope idfolders without reassigning
             idfolders.clear()
             idfolders.extend([str(videos_folder / subfolders[i]) for i in selected_indices])
             subfolder_window.destroy()
 
+        # Button to confirm selection of recordings
         confirm_button = tk.Button(subfolder_window, text="Select", command=save_selection)
         confirm_button.pack()
 
     def on_submit():
+        """
+        Gathers all user-selected options and runs the processing scripts.
+
+        This function collects the values from the GUI elements and stores them
+        in the 'gui_options' dictionary. It then serializes the options to JSON
+        and executes the appropriate processing scripts based on the selections.
+        """
         gui_options['idfolders'] = idfolders
         gui_options['main_folder'] = main_folder
         gui_options['fraction_frames'] = slider_fraction_frames.get()
@@ -84,9 +118,11 @@ def select_folder_and_options():
 
         if not gui_options['idfolders']:
             messagebox.showerror("Error", "No folder selected!")
+            return  # Prevent further execution if no folders are selected
 
         gui_options_json = json.dumps(gui_options)
 
+        # Execute the processing scripts based on user selections
         if gui_options['run_mediapipe']:
             print('Running Mediapipe.')
             subprocess.run(['python', 'labels2d.py', gui_options_json])
@@ -95,21 +131,26 @@ def select_folder_and_options():
             print('Triangulating.')
             subprocess.run(['python', 'triangulaterefine.py', gui_options_json])
 
-
     def quit_application():
+        """
+        Exits the application gracefully by closing the main window.
+        """
         root.quit()
         root.destroy()
 
+    # Initialize the main Tkinter window
     root = tk.Tk()
     root.title("Options for Processing")
 
-    gui_options = {}
+    gui_options = {}  # Dictionary to hold GUI options
 
+    # Set window size and center it on the screen
     window_width, window_height = 600, 650
     screen_width, screen_height = root.winfo_screenwidth(), root.winfo_screenheight()
     position_x, position_y = (screen_width - window_width) // 2, (screen_height - window_height) // 2
     root.geometry(f'{window_width}x{window_height}+{position_x}+{position_y}')
 
+    # Variables for storing GUI state
     var_run_mediapipe = tk.BooleanVar(value=True)
     var_save_images_mp = tk.BooleanVar(value=False)
     var_save_video_mp = tk.BooleanVar(value=False)
@@ -118,72 +159,108 @@ def select_folder_and_options():
     var_save_images_triangulation = tk.BooleanVar(value=False)
     var_save_video_triangulation = tk.BooleanVar(value=False)
 
-    chk_general_options = tk.Label(root, text="General Settings", font=("Arial", 12, "bold"))
-    chk_general_options.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+    # General settings label
+    lbl_general_options = tk.Label(root, text="General Settings", font=("Arial", 12, "bold"))
+    lbl_general_options.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="w")
 
+    # Button to select the main folder
     btn_select_folder = tk.Button(root, text="Select Folder", command=select_folder)
     btn_select_folder.grid(row=1, column=0, padx=10, pady=5, sticky="w")
 
+    # Label to display the selected folder
     folder_label = tk.Label(root, text="Folder: Not selected", anchor='w', wraplength=450)
     folder_label.grid(row=1, column=1, padx=10, pady=5, sticky="w")
 
-    slider_fraction_frames = tk.Scale(root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
-                                      label="Fraction of recordings to process")
+    # Slider for fraction of frames to process
+    slider_fraction_frames = tk.Scale(
+        root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
+        label="Fraction of frames to process"
+    )
     slider_fraction_frames.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
     slider_fraction_frames.set(1.0)
 
-    # Initialize num_processes_scale and set it to update based on the number of cameras
+    # Slider for number of parallel processes
     num_cpus = os.cpu_count()
-    num_processes_scale = tk.Scale(root, from_=1, to=num_cpus, orient=tk.HORIZONTAL,
-                                   label="Number of parallel processes")
+    num_processes_scale = tk.Scale(
+        root, from_=1, to=num_cpus, orient=tk.HORIZONTAL,
+        label="Number of parallel processes"
+    )
     num_processes_scale.grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
     num_processes_scale.set(num_cpus)
 
+    # Checkbox for GPU processing
     chk_use_gpu = tk.Checkbutton(root, text="GPU Processing", variable=var_use_gpu)
     chk_use_gpu.grid(row=4, column=0, columnspan=2, padx=10, pady=5, sticky="w")
 
-    chk_run_mediapipe = tk.Checkbutton(root, text="Run Mediapipe", font=("Arial", 12, "bold"),
-                                       variable=var_run_mediapipe)
-    chk_run_mediapipe.grid(row=5, column=0, columnspan=2, padx=10, pady=(10, 0), sticky="w")
+    # Separator
+    tk.Label(root, text="").grid(row=5, column=0, columnspan=2)
 
+    # Checkbox to run Mediapipe
+    chk_run_mediapipe = tk.Checkbutton(
+        root, text="Run Mediapipe", font=("Arial", 12, "bold"),
+        variable=var_run_mediapipe
+    )
+    chk_run_mediapipe.grid(row=6, column=0, columnspan=2, padx=10, pady=(10, 0), sticky="w")
+
+    # Checkboxes for saving images and videos during Mediapipe processing
     chk_save_images_mp = tk.Checkbutton(root, text="Save Images", variable=var_save_images_mp)
-    chk_save_images_mp.grid(row=6, column=0, padx=5, pady=5, sticky="w")
+    chk_save_images_mp.grid(row=7, column=0, padx=5, pady=5, sticky="w")
     chk_save_video_mp = tk.Checkbutton(root, text="Save Video", variable=var_save_video_mp)
-    chk_save_video_mp.grid(row=6, column=1, padx=5, pady=5, sticky="w")
+    chk_save_video_mp.grid(row=7, column=1, padx=5, pady=5, sticky="w")
 
-    slider_handconf = tk.Scale(root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
-                               label="Minimum hand detection & tracking confidence")
-    slider_handconf.grid(row=7, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+    # Slider for hand detection confidence
+    slider_handconf = tk.Scale(
+        root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
+        label="Minimum hand detection & tracking confidence"
+    )
+    slider_handconf.grid(row=8, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
     slider_handconf.set(0.9)
 
-    slider_poseconf = tk.Scale(root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
-                               label="Minimum pose detection & tracking confidence")
-    slider_poseconf.grid(row=8, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+    # Slider for pose detection confidence
+    slider_poseconf = tk.Scale(
+        root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
+        label="Minimum pose detection & tracking confidence"
+    )
+    slider_poseconf.grid(row=9, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
     slider_poseconf.set(0.9)
 
-    chk_triangulation = tk.Checkbutton(root, text="Triangulation", font=("Arial", 12, "bold"),
-                                       variable=var_triangulation)
+    # Separator
+    tk.Label(root, text="").grid(row=10, column=0, columnspan=2)
+
+    # Checkbox to run triangulation
+    chk_triangulation = tk.Checkbutton(
+        root, text="Triangulation", font=("Arial", 12, "bold"),
+        variable=var_triangulation
+    )
     chk_triangulation.grid(row=11, column=0, columnspan=2, padx=10, pady=(10, 0), sticky="w")
 
-    chk_save_images_triangulation = tk.Checkbutton(root, text="Save Images", variable=var_save_images_triangulation)
+    # Checkboxes for saving images and videos during triangulation
+    chk_save_images_triangulation = tk.Checkbutton(
+        root, text="Save Images", variable=var_save_images_triangulation
+    )
     chk_save_images_triangulation.grid(row=12, column=0, padx=5, pady=5, sticky="w")
-    chk_save_video_triangulation = tk.Checkbutton(root, text="Save Video", variable=var_save_video_triangulation)
+    chk_save_video_triangulation = tk.Checkbutton(
+        root, text="Save Video", variable=var_save_video_triangulation
+    )
     chk_save_video_triangulation.grid(row=12, column=1, padx=5, pady=5, sticky="w")
 
-    # Run button
+    # Button to start processing
     btn_submit = tk.Button(root, text="GO", command=on_submit)
     btn_submit.grid(row=13, column=0, columnspan=2, padx=10, pady=10)
 
-    # Add QUIT button at the bottom
+    # Button to quit the application
     btn_quit = tk.Button(root, text="QUIT", command=quit_application)
     btn_quit.grid(row=14, column=0, columnspan=2, padx=10, pady=10)
 
-    # Configure only two columns for better centering
+    # Configure the grid layout for better alignment
     root.grid_columnconfigure(0, weight=1)
     root.grid_columnconfigure(1, weight=1)
 
+    # Start the Tkinter event loop
     root.mainloop()
     return gui_options
 
+
 if __name__ == '__main__':
+    # Run the GUI and obtain the selected options
     gui_options = select_folder_and_options()

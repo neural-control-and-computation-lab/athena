@@ -1,0 +1,15 @@
+name: athena_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - av
+  - pip
+  - pip:
+    - mediapipe
+    - numpy
+    - matplotlib
+    - tqdm
+    - scipy
+    - pymovie
