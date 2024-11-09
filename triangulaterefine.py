@@ -135,7 +135,7 @@ def restore_long_nan_runs(original_data, filtered_data, min_length=5):
     return filtered_data
 
 
-def smooth3d(data3d, fps, centroid_frequency_cutoff=5, centroid_polyorder=2,
+def smooth3d(data3d, fps, centroid_frequency_cutoff=5, centroid_polyorder=3,
              point_frequency_cutoff=20, point_polyorder=3,
              iterations=3, threshold_factor=0.1):
     """
@@ -482,7 +482,8 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
                             cv.circle(img, posn, 3, (0, 0, 0), thickness=1)
 
                 resized_frame = cv.resize(img, (display_width, display_height))
-                cv.imwrite(f"{outdir_images_refined}{trialname}/cam{cam}/frame{framenum:04d}.png", resized_frame)
+                output_path = os.path.join(outdir_images_refined, trialname, f'cam{cam}', f'frame{framenum:04d}.png')
+                cv.imwrite(output_path, resized_frame)
 
     except Exception as e:
         print(f"Error processing camera {cam}, frame {framenum}: {e}")
@@ -687,7 +688,9 @@ if __name__ == '__main__':
         container.close()
 
         # Smooth 3D data
-        data3d = smooth3d(data3d, fps=fps)
+        data3d = smooth3d(data3d, fps=fps,
+                          centroid_frequency_cutoff=gui_options['hand_centroid_lfc'],
+                          point_frequency_cutoff=gui_options['all_landmarks_lfc'])
 
         # Re-flatten
         data3d = data3d.reshape(-1, 3)

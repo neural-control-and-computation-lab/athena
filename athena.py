@@ -7,7 +7,7 @@ from tkinter import filedialog, messagebox, Listbox, MULTIPLE, Toplevel, Scrollb
 from pathlib import Path
 
 
-def select_folder_and_options():
+def select_folder_and_options(root):
     """
     Launches a GUI for selecting the main folder and setting processing options.
 
@@ -115,6 +115,8 @@ def select_folder_and_options():
         gui_options['run_triangulation'] = var_triangulation.get()
         gui_options['save_images_triangulation'] = var_save_images_triangulation.get()
         gui_options['save_video_triangulation'] = var_save_video_triangulation.get()
+        gui_options['hand_centroid_lfc'] = slider_hand_lfc.get()
+        gui_options['all_landmarks_lfc'] = slider_all_lfc.get()
 
         if not gui_options['idfolders']:
             messagebox.showerror("Error", "No folder selected!")
@@ -131,6 +133,9 @@ def select_folder_and_options():
             print('Triangulating.')
             subprocess.run(['python', 'triangulaterefine.py', gui_options_json])
 
+        # Close the GUI
+        root.destroy()
+
     def quit_application():
         """
         Exits the application gracefully by closing the main window.
@@ -138,10 +143,41 @@ def select_folder_and_options():
         root.quit()
         root.destroy()
 
-    # Initialize the main Tkinter window
-    root = tk.Tk()
-    root.title("Options for Processing")
+    def update_save_images_mp(*args):
+        """
+        Ensures that 'Save Images' is checked if 'Save Video' is checked in Mediapipe options.
+        If 'Save Images' is unchecked while 'Save Video' is checked, 'Save Video' is unchecked.
+        """
+        if var_save_video_mp.get():
+            var_save_images_mp.set(True)
+        elif not var_save_images_mp.get() and var_save_video_mp.get():
+            var_save_video_mp.set(False)
 
+    def update_save_video_mp(*args):
+        """
+        Ensures that 'Save Video' is unchecked if 'Save Images' is unchecked in Mediapipe options.
+        """
+        if not var_save_images_mp.get() and var_save_video_mp.get():
+            var_save_video_mp.set(False)
+
+    def update_save_images_triangulation(*args):
+        """
+        Ensures that 'Save Images' is checked if 'Save Video' is checked in Triangulation options.
+        If 'Save Images' is unchecked while 'Save Video' is checked, 'Save Video' is unchecked.
+        """
+        if var_save_video_triangulation.get():
+            var_save_images_triangulation.set(True)
+        elif not var_save_images_triangulation.get() and var_save_video_triangulation.get():
+            var_save_video_triangulation.set(False)
+
+    def update_save_video_triangulation(*args):
+        """
+        Ensures that 'Save Video' is unchecked if 'Save Images' is unchecked in Triangulation options.
+        """
+        if not var_save_images_triangulation.get() and var_save_video_triangulation.get():
+            var_save_video_triangulation.set(False)
+
+    # Now set up the GUI components
     gui_options = {}  # Dictionary to hold GUI options
 
     # Set window size and center it on the screen
@@ -159,108 +195,172 @@ def select_folder_and_options():
     var_save_images_triangulation = tk.BooleanVar(value=False)
     var_save_video_triangulation = tk.BooleanVar(value=False)
 
-    # General settings label
-    lbl_general_options = tk.Label(root, text="General Settings", font=("Arial", 12, "bold"))
-    lbl_general_options.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+    # Trace changes to 'Save Video' and 'Save Images' variables
+    var_save_video_mp.trace_add('write', update_save_images_mp)
+    var_save_images_mp.trace_add('write', update_save_video_mp)
+
+    var_save_video_triangulation.trace_add('write', update_save_images_triangulation)
+    var_save_images_triangulation.trace_add('write', update_save_video_triangulation)
+
+    # General settings frame
+    frame_general = tk.LabelFrame(root, text="General Settings", padx=10, pady=10)
+    frame_general.pack(fill="x", padx=10, pady=5)
 
     # Button to select the main folder
-    btn_select_folder = tk.Button(root, text="Select Folder", command=select_folder)
-    btn_select_folder.grid(row=1, column=0, padx=10, pady=5, sticky="w")
+    btn_select_folder = tk.Button(frame_general, text="Select Folder", command=select_folder)
+    btn_select_folder.grid(row=0, column=0, padx=10, pady=5, sticky="w")
 
     # Label to display the selected folder
-    folder_label = tk.Label(root, text="Folder: Not selected", anchor='w', wraplength=450)
-    folder_label.grid(row=1, column=1, padx=10, pady=5, sticky="w")
+    folder_label = tk.Label(frame_general, text="Folder: Not selected", anchor='w', wraplength=450)
+    folder_label.grid(row=0, column=1, padx=10, pady=5, sticky="w")
+
+    # Run Mediapipe frame
+    frame_mediapipe = tk.LabelFrame(root, text="Run Mediapipe", padx=10, pady=10)
+    frame_mediapipe.pack(fill="x", padx=10, pady=5)
+
+    # Checkbox to run Mediapipe
+    chk_run_mediapipe = tk.Checkbutton(
+        frame_mediapipe, text="Run Mediapipe", font=("Arial", 15, "bold"),
+        variable=var_run_mediapipe
+    )
+    chk_run_mediapipe.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+
+    # Configure column weights for equal resizing
+    frame_mediapipe.columnconfigure(0, weight=1)
+    frame_mediapipe.columnconfigure(1, weight=1)
 
     # Slider for fraction of frames to process
     slider_fraction_frames = tk.Scale(
-        root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
+        frame_mediapipe, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
         label="Fraction of frames to process"
     )
-    slider_fraction_frames.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
+    slider_fraction_frames.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
     slider_fraction_frames.set(1.0)
 
     # Slider for number of parallel processes
     num_cpus = os.cpu_count()
     num_processes_scale = tk.Scale(
-        root, from_=1, to=num_cpus, orient=tk.HORIZONTAL,
+        frame_mediapipe, from_=1, to=num_cpus, orient=tk.HORIZONTAL,
         label="Number of parallel processes"
     )
-    num_processes_scale.grid(row=3, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
+    num_processes_scale.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
     num_processes_scale.set(num_cpus)
 
     # Checkbox for GPU processing
-    chk_use_gpu = tk.Checkbutton(root, text="GPU Processing", variable=var_use_gpu)
-    chk_use_gpu.grid(row=4, column=0, columnspan=2, padx=10, pady=5, sticky="w")
-
-    # Separator
-    tk.Label(root, text="").grid(row=5, column=0, columnspan=2)
-
-    # Checkbox to run Mediapipe
-    chk_run_mediapipe = tk.Checkbutton(
-        root, text="Run Mediapipe", font=("Arial", 12, "bold"),
-        variable=var_run_mediapipe
-    )
-    chk_run_mediapipe.grid(row=6, column=0, columnspan=2, padx=10, pady=(10, 0), sticky="w")
-
-    # Checkboxes for saving images and videos during Mediapipe processing
-    chk_save_images_mp = tk.Checkbutton(root, text="Save Images", variable=var_save_images_mp)
-    chk_save_images_mp.grid(row=7, column=0, padx=5, pady=5, sticky="w")
-    chk_save_video_mp = tk.Checkbutton(root, text="Save Video", variable=var_save_video_mp)
-    chk_save_video_mp.grid(row=7, column=1, padx=5, pady=5, sticky="w")
+    chk_use_gpu = tk.Checkbutton(frame_mediapipe, text="GPU Processing", variable=var_use_gpu)
+    chk_use_gpu.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="w")
 
     # Slider for hand detection confidence
     slider_handconf = tk.Scale(
-        root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
-        label="Minimum hand detection & tracking confidence"
+        frame_mediapipe, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
+        label="Minimum hand detection confidence"
     )
-    slider_handconf.grid(row=8, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+    slider_handconf.grid(row=3, column=0, padx=5, pady=5, sticky="ew")
     slider_handconf.set(0.9)
 
     # Slider for pose detection confidence
     slider_poseconf = tk.Scale(
-        root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
-        label="Minimum pose detection & tracking confidence"
+        frame_mediapipe, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL,
+        label="Minimum pose detection confidence"
     )
-    slider_poseconf.grid(row=9, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+    slider_poseconf.grid(row=3, column=1, padx=5, pady=5, sticky="ew")
     slider_poseconf.set(0.9)
 
-    # Separator
-    tk.Label(root, text="").grid(row=10, column=0, columnspan=2)
+    # Checkboxes for saving images and videos during Mediapipe processing
+    chk_save_images_mp = tk.Checkbutton(frame_mediapipe, text="Save Images", variable=var_save_images_mp)
+    chk_save_images_mp.grid(row=4, column=0, padx=5, pady=5, sticky="w")
+    chk_save_video_mp = tk.Checkbutton(frame_mediapipe, text="Save Video", variable=var_save_video_mp)
+    chk_save_video_mp.grid(row=4, column=1, padx=5, pady=5, sticky="w")
+
+    # Triangulation and Refinement frame
+    frame_triangulation = tk.LabelFrame(root, text="Triangulation and Refinement", padx=10, pady=10)
+    frame_triangulation.pack(fill="x", padx=10, pady=5)
 
     # Checkbox to run triangulation
     chk_triangulation = tk.Checkbutton(
-        root, text="Triangulation", font=("Arial", 12, "bold"),
+        frame_triangulation, text="Run Triangulation and Refinement", font=("Arial", 15, "bold"),
         variable=var_triangulation
     )
-    chk_triangulation.grid(row=11, column=0, columnspan=2, padx=10, pady=(10, 0), sticky="w")
+    chk_triangulation.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+
+    # Configure column weights for equal resizing
+    frame_triangulation.columnconfigure(0, weight=1)
+    frame_triangulation.columnconfigure(1, weight=1)
+
+    # Hand centroid low-frequency cutoff
+    slider_hand_lfc = tk.Scale(
+        frame_triangulation, from_=1, to=20, resolution=1, orient=tk.HORIZONTAL,
+        label="Hand centroid: low-freq cutoff (Hz)"
+    )
+    slider_hand_lfc.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+    slider_hand_lfc.set(5)
+
+    # All landmark low-frequency cutoff
+    slider_all_lfc = tk.Scale(
+        frame_triangulation, from_=1, to=50, resolution=1, orient=tk.HORIZONTAL,
+        label="All points: low-freq cutoff (Hz)"
+    )
+    slider_all_lfc.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+    slider_all_lfc.set(20)
 
     # Checkboxes for saving images and videos during triangulation
     chk_save_images_triangulation = tk.Checkbutton(
-        root, text="Save Images", variable=var_save_images_triangulation
+        frame_triangulation, text="Save Images", variable=var_save_images_triangulation
     )
-    chk_save_images_triangulation.grid(row=12, column=0, padx=5, pady=5, sticky="w")
+    chk_save_images_triangulation.grid(row=2, column=0, padx=5, pady=5, sticky="w")
     chk_save_video_triangulation = tk.Checkbutton(
-        root, text="Save Video", variable=var_save_video_triangulation
+        frame_triangulation, text="Save Video", variable=var_save_video_triangulation
     )
-    chk_save_video_triangulation.grid(row=12, column=1, padx=5, pady=5, sticky="w")
+    chk_save_video_triangulation.grid(row=2, column=1, padx=5, pady=5, sticky="w")
 
     # Button to start processing
     btn_submit = tk.Button(root, text="GO", command=on_submit)
-    btn_submit.grid(row=13, column=0, columnspan=2, padx=10, pady=10)
+    btn_submit.pack(pady=10)
 
     # Button to quit the application
     btn_quit = tk.Button(root, text="QUIT", command=quit_application)
-    btn_quit.grid(row=14, column=0, columnspan=2, padx=10, pady=10)
+    btn_quit.pack(pady=5)
 
-    # Configure the grid layout for better alignment
-    root.grid_columnconfigure(0, weight=1)
-    root.grid_columnconfigure(1, weight=1)
+    # No need to call root.mainloop() here since it's already running in main()
 
-    # Start the Tkinter event loop
+
+def main():
+    # Create the root window
+    root = tk.Tk()
+    root.title("ATHENA: Automatically Tracking Hands Expertly with No Annotations")
+    # Hide the root window for now
+    root.withdraw()
+
+    # Create the splash screen
+    splash = Toplevel()
+    splash.overrideredirect(True)
+    # Load the logo image
+    logo_path = 'logo.png'  # Adjust the path to your logo image
+    logo_image = tk.PhotoImage(file=logo_path)
+    window_width = logo_image.width()
+    window_height = logo_image.height()
+    # Get the screen width and height
+    screen_width = splash.winfo_screenwidth()
+    screen_height = splash.winfo_screenheight()
+    # Calculate position x and y coordinates
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+    splash.geometry(f'{window_width}x{window_height}+{x}+{y}')
+    label = tk.Label(splash, image=logo_image)
+    label.pack()
+    # Keep a reference
+    label.image = logo_image
+
+    # After duration milliseconds, destroy splash and show root window
+    def close_splash():
+        splash.destroy()
+        root.deiconify()  # Show the root window
+        select_folder_and_options(root)
+
+    splash.after(2000, close_splash)  # Display splash for 2000 milliseconds (2 seconds)
+    # Start the event loop
     root.mainloop()
-    return gui_options
 
 
 if __name__ == '__main__':
-    # Run the GUI and obtain the selected options
-    gui_options = select_folder_and_options()
+    main()

@@ -115,7 +115,7 @@ Contributions are welcome! If you encounter issues or have suggestions for impro
 ### Frequently Asked Questions (FAQ)
 
 Q: Do I need a GPU to run the ATHENA Toolbox?\
-A: No, a GPU is not required but is recommended for faster processing. If you have a compatible NVIDIA GPU, you can enable GPU processing in the options. Ensure that your GPU drivers and CUDA toolkit are correctly installed.
+A: No, a GPU is not required and does not generally speed up processing, which is already highly parallelized. If you have a compatible NVIDIA GPU, you can enable GPU processing in the options. Ensure that your GPU drivers and CUDA toolkit are correctly installed.
 
 Q: Can I process videos from only one camera?\
 A: Yes, you can process videos from a single camera to extract 2D landmarks. However, triangulation to 3D landmarks requires synchronized videos from at least two cameras and their corresponding calibration files.
