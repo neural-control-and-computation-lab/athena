@@ -86,16 +86,61 @@ def calculate_bone_lengths(data3d, links):
     return bone_lengths
 
 
-def smooth3d(data3d, sigma=1, iterations=5, threshold_factor=0.1):
+def restore_long_nan_runs(original_data, filtered_data, min_length=5):
     """
-    Applies iterative smoothing and bone-length constraint enforcement.
+    Restores NaNs in the filtered_data where the original data had contiguous NaN runs longer than min_length frames.
+
+    :param original_data: Original 1D data array with NaNs.
+    :param filtered_data: Filtered 1D data array.
+    :param min_length: Minimum length of NaN runs to restore.
+    :return: Filtered data with NaNs restored in appropriate places.
+    """
+    nan_mask = np.isnan(original_data)
+    n = len(nan_mask)
+    is_nan = np.concatenate(([0], nan_mask.view(np.int8), [0]))
+    absdiff = np.abs(np.diff(is_nan))
+    ranges = np.where(absdiff == 1)[0].reshape(-1, 2)
+    for start, end in ranges:
+        run_length = end - start
+        if run_length > min_length:
+            filtered_data[start:end] = np.nan
+    return filtered_data
+
+
+def smooth3d(data3d, fps, centroid_frequency_cutoff=5, centroid_polyorder=2,
+             point_frequency_cutoff=20, point_polyorder=3,
+             iterations=3, threshold_factor=0.1):
+    """
+    Applies iterative smoothing with frequency-based window lengths to hand centroids and points,
+    restoring NaNs only for long missing data runs.
 
     :param data3d: 3D data array [frames, landmarks, coordinates].
-    :param sigma: Standard deviation for Gaussian kernel.
+    :param fps: Frames per second of the data.
+    :param centroid_frequency_cutoff: Desired cutoff frequency (Hz) for centroid smoothing.
+    :param centroid_polyorder: Polynomial order for centroid smoothing.
+    :param point_frequency_cutoff: Desired cutoff frequency (Hz) for point smoothing.
+    :param point_polyorder: Polynomial order for point smoothing.
     :param iterations: Number of smoothing and constraint enforcement iterations.
     :param threshold_factor: Allowed deviation from the median bone length.
     :return: Smoothed and adjusted 3D data.
     """
+    n_frames, n_landmarks, _ = data3d.shape
+
+    # Determine window lengths based on desired cutoff frequencies
+    centroid_window_length = int(fps / centroid_frequency_cutoff * 2 + 1)
+    point_window_length = int(fps / point_frequency_cutoff * 2 + 1)
+
+    # Ensure window lengths are odd and valid
+    if centroid_window_length % 2 == 0:
+        centroid_window_length += 1
+    if centroid_window_length > n_frames:
+        centroid_window_length = n_frames if n_frames % 2 != 0 else n_frames - 1
+
+    if point_window_length % 2 == 0:
+        point_window_length += 1
+    if point_window_length > n_frames:
+        point_window_length = n_frames if n_frames % 2 != 0 else n_frames - 1
+
     # Define the bone links
     links = [[33, 34], [34, 35], [35, 36], [36, 37],  # right thumb
              [33, 38], [38, 39], [39, 40], [40, 41],
@@ -114,14 +159,67 @@ def smooth3d(data3d, sigma=1, iterations=5, threshold_factor=0.1):
     data3d_smoothed = data3d.copy()
 
     for it in range(iterations):
-        # Apply NaN-aware Gaussian smoothing over time
+        # Aggressive low-pass filtering of hand centroids
+        for hand_indices in [range(33, 54), range(54, 75)]:
+            # Compute centroid for each frame
+            centroids = np.nanmean(data3d_smoothed[:, hand_indices, :], axis=1)  # shape (n_frames, 3)
+
+            # Handle NaNs in centroids
+            nan_mask = np.isnan(centroids).any(axis=1)
+            valid_mask = ~nan_mask
+
+            if np.sum(valid_mask) < centroid_window_length:
+                # Not enough data to smooth; skip smoothing for this hand
+                smoothed_centroids = centroids.copy()
+            else:
+                smoothed_centroids = centroids.copy()
+                for coord in range(3):
+                    data = centroids[:, coord]
+                    data_valid = data[valid_mask]
+                    indices = np.arange(len(data))
+                    data_interp = np.interp(indices, indices[valid_mask], data_valid)
+                    # Apply aggressive low-pass filtering to centroids
+                    data_filtered = savgol_filter(data_interp, window_length=centroid_window_length,
+                                                  polyorder=centroid_polyorder)
+                    # Restore NaNs only for long missing data runs
+                    data_filtered = restore_long_nan_runs(data, data_filtered, min_length=5)
+                    smoothed_centroids[:, coord] = data_filtered
+
+            # For each frame, adjust hand landmarks based on smoothed centroid
+            for frame in range(n_frames):
+                if np.isnan(smoothed_centroids[frame]).any():
+                    continue  # Skip frames where centroid is NaN
+                original_centroid = np.nanmean(data3d_smoothed[frame, hand_indices, :], axis=0)
+                if np.isnan(original_centroid).any():
+                    continue  # Skip if original centroid cannot be computed
+                smoothed_centroid = smoothed_centroids[frame]
+                # Compute the shift
+                shift = smoothed_centroid - original_centroid
+                # Adjust all hand landmarks
+                data3d_smoothed[frame, hand_indices, :] += shift
+
+        # Less aggressive filtering of all points
         for coord in range(3):
-            data = data3d_smoothed[:, :, coord]
-            data3d_smoothed[:, :, coord] = nan_gaussian_filter1d(
-                data, sigma=sigma, axis=0)
+            for landmark in range(n_landmarks):
+                data = data3d_smoothed[:, landmark, coord]
+                nan_mask = np.isnan(data)
+                valid_mask = ~nan_mask
+                if np.sum(valid_mask) < point_window_length:
+                    # Not enough data to smooth; skip this landmark
+                    continue
+                data_valid = data[valid_mask]
+                indices = np.arange(len(data))
+                # Interpolate missing data
+                data_interp = np.interp(indices, indices[valid_mask], data_valid)
+                # Apply less aggressive Savitzky-Golay filter
+                data_filtered = savgol_filter(data_interp, window_length=point_window_length,
+                                              polyorder=point_polyorder)
+                # Restore NaNs only for long missing data runs
+                data_filtered = restore_long_nan_runs(data, data_filtered, min_length=5)
+                data3d_smoothed[:, landmark, coord] = data_filtered
 
         # Enforce bone-length constraints
-        for frame in range(data3d_smoothed.shape[0]):
+        for frame in range(n_frames):
             for link in links:
                 p1_idx, p2_idx = link
                 point1 = data3d_smoothed[frame, p1_idx]
@@ -145,28 +243,6 @@ def smooth3d(data3d, sigma=1, iterations=5, threshold_factor=0.1):
                         data3d_smoothed[frame, p2_idx] = midpoint + (point2 - midpoint) * scaling_factor
 
     return data3d_smoothed
-
-def nan_gaussian_filter1d(arr, sigma, axis=0):
-    """
-    Apply Gaussian filter to an array with NaN values along a specified axis.
-
-    :param arr: Input array with NaNs.
-    :param sigma: Standard deviation for Gaussian kernel.
-    :param axis: Axis along which to apply the filter.
-    :return: Smoothed array.
-    """
-    # Create an array of weights where data is not NaN
-    weights = (~np.isnan(arr)).astype(float)
-    # Replace NaNs with zero for convolution
-    arr_filled = np.nan_to_num(arr)
-    # Apply Gaussian filter to the data and weights
-    filtered_data = gaussian_filter1d(arr_filled * weights, sigma=sigma, axis=axis, mode='nearest')
-    filtered_weights = gaussian_filter1d(weights, sigma=sigma, axis=axis, mode='nearest')
-    # Avoid division by zero
-    with np.errstate(invalid='ignore', divide='ignore'):
-        smoothed_arr = filtered_data / filtered_weights
-    smoothed_arr[filtered_weights == 0] = np.nan
-    return smoothed_arr
 
 
 def switch_hands(data2d):
@@ -573,8 +649,19 @@ if __name__ == '__main__':
         # Reshaping to nframes x nlandmarks x 3-dimension
         data3d = data3d.reshape((int(len(data3d) / nlandmarks), nlandmarks, 3))
 
+        vidnames = sorted(glob.glob(main_folder + '/videos/' + trialname + '/*.avi'))
+        # Create PyAV container and video stream
+        container = av.open(vidnames[0])
+        video_stream = container.streams.video[0]
+        # Get video FPS and total frames
+        if video_stream.average_rate is not None and video_stream.average_rate.denominator != 0:
+            fps = video_stream.average_rate.numerator / video_stream.average_rate.denominator
+        else:
+            fps = 30.0  # Default FPS if not available
+        container.close()
+
         # Smooth
-        data3d = smooth3d(data3d)
+        data3d = smooth3d(data3d, fps=fps)
 
         # Re-flatten
         data3d = data3d.reshape(-1, 3)
@@ -606,11 +693,10 @@ if __name__ == '__main__':
             visualize_3d(data3d, save_path=outdir_images_trialfolder + 'frame_{:04d}.png')
         if gui_options['save_video_triangulation']:
             print('Saving video.')
-            createvideo(image_folder=outdir_images_trialfolder, extension='.png', fs=100,
+            createvideo(image_folder=outdir_images_trialfolder, extension='.png', fs=fps,
                         output_folder=outdir_video_trialfolder, video_name='data3d.mp4')
 
         # Output visualizations
-        vidnames = sorted(glob.glob(main_folder + '/videos/' + trialname + '/*.avi'))
         if gui_options['save_images_triangulation']:
             print('Saving refined images.')
             visualizelabels(vidnames, outdir_images_refined=outdir_images_refined, trialname=trialname, data=data_2d_new)
@@ -619,5 +705,5 @@ if __name__ == '__main__':
             print('Saving refined videos.')
             for cam in range(ncams):
                 imagefolder = outdir_images_refined + trialname + '/cam' + str(cam)
-                createvideo(image_folder=imagefolder, extension='.png', fs=100,
+                createvideo(image_folder=imagefolder, extension='.png', fs=fps,
                             output_folder=outdir_video + trialname, video_name='cam' + str(cam) + '_refined.mp4')

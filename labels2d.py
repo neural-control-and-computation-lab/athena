@@ -652,6 +652,15 @@ if __name__ == '__main__':
                 vidnames = sorted(glob.glob(os.path.join(trial, '*.avi')))
                 ncams = len(vidnames)
 
+                container = av.open(vidnames[0])
+                video_stream = container.streams.video[0]
+                # Get video FPS and total frames
+                if video_stream.average_rate is not None and video_stream.average_rate.denominator != 0:
+                    fps = video_stream.average_rate.numerator / video_stream.average_rate.denominator
+                else:
+                    fps = 30.0  # Default FPS if not available
+                container.close()
+
                 outdir_images_trial = os.path.join(outdir_images, trialname)
                 outdir_video_trial = os.path.join(outdir_video, trialname)
                 outdir_data2d_trial = os.path.join(outdir_data2d, trialname)
@@ -683,7 +692,7 @@ if __name__ == '__main__':
                     os.makedirs(outdir_video_trial, exist_ok=True)
                     for cam in range(ncams):
                         imagefolder = os.path.join(outdir_images_trial, f'cam{cam}')
-                        createvideo(image_folder=imagefolder, extension='.png', fs=60,
+                        createvideo(image_folder=imagefolder, extension='.png', fs=fps,
                                     output_folder=outdir_video_trial, video_name=f'cam{cam}.mp4')
 
                 # Update progress per trial
