@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "athena"
+name = "athena-tracking"
 dynamic = ["version"]
 authors = [
   { name="Jonathan Michaels", email="jmichae@yorku.ca" },
