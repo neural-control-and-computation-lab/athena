@@ -1,27 +1,18 @@
 import json
 import os
 import glob
-import subprocess
 import tkinter as tk
 from tkinter import filedialog, messagebox, Listbox, MULTIPLE, Toplevel, Scrollbar
 from pathlib import Path
+import sys
+import importlib.resources as pkg_resources  # For accessing package resources
+from athena.labels2d import main as labels2d_main
 
+package_name = 'athena'
 
 def select_folder_and_options(root):
     """
     Launches a GUI for selecting the main folder and setting processing options.
-
-    This function creates a Tkinter GUI that allows the user to:
-    - Select the main folder containing video data and calibration files.
-    - Choose specific recordings (subfolders) to process.
-    - Adjust processing settings such as fraction of frames to process,
-      number of parallel processes, GPU usage, and confidence thresholds.
-    - Decide whether to run Mediapipe and/or triangulation steps.
-    - Choose whether to save images and videos at different stages.
-    - Start the processing by running the appropriate scripts with the selected options.
-
-    Returns:
-        dict: A dictionary containing all the selected options.
     """
     # Initialize variables accessible within nested functions
     idfolders = []       # List of selected recording folders
@@ -31,76 +22,99 @@ def select_folder_and_options(root):
     def select_folder():
         """
         Opens a dialog to select the main folder and allows selection of recordings.
-
-        This function updates the 'main_folder', 'num_cameras', and 'idfolders' variables.
-        It adjusts the number of processes based on the number of cameras and displays
-        a secondary window for selecting specific recordings to process.
         """
         nonlocal main_folder
-        main_folder = filedialog.askdirectory(
-            initialdir=str(Path(os.getcwd())),
-            title="Select Main Folder"
-        )
-        if not main_folder:
-            return  # Exit if no folder is selected
+        try:
+            # Use the main root window as the parent
+            main_folder = filedialog.askdirectory(
+                title="Select Main Folder",
+                parent=root
+            )
 
-        # Update the number of cameras based on calibration files
-        nonlocal num_cameras
-        num_cameras = len(glob.glob(os.path.join(main_folder, 'calibration', '*.yaml')))
+            if not main_folder:
+                return  # Exit if no folder is selected
 
-        # Adjust the number of processes based on the number of cameras
-        max_processes = min(os.cpu_count(), num_cameras)
-        num_processes_scale.configure(to=max_processes)
-        num_processes_scale.set(max_processes)
+            # Update the folder label in the main window
+            folder_label.config(text="Selected Folder: " + str(main_folder))
 
-        # Get the list of subfolders (recordings) in the videos directory
-        videos_folder = Path(main_folder) / 'videos'
-        subfolders = [f.name for f in videos_folder.iterdir() if f.is_dir()]
+            # Update the number of cameras based on calibration files
+            nonlocal num_cameras
+            calibration_folder = os.path.join(main_folder, 'calibration')
+            if os.path.exists(calibration_folder):
+                num_cameras = len(glob.glob(os.path.join(calibration_folder, '*.yaml')))
+            else:
+                num_cameras = 0
 
-        # Create a new window for selecting recordings
-        subfolder_window = Toplevel(root)
-        subfolder_window.title("Select Recordings")
+            if num_cameras == 0:
+                messagebox.showerror("Error", "No calibration files found in 'calibration' folder.")
+                return  # Exit if no calibration files found
 
-        # Position the subfolder window next to the main window
-        main_x, main_y = root.winfo_x(), root.winfo_y()
-        main_width = root.winfo_width()
-        subfolder_window.geometry(f"+{main_x + main_width + 10}+{main_y}")
+            # Adjust the number of processes based on the number of cameras
+            max_processes = min(os.cpu_count(), num_cameras)
+            if max_processes < 1:
+                max_processes = 1  # Ensure at least one process
+            num_processes_scale.configure(to=max_processes)
+            num_processes_scale.set(max_processes)
 
-        # Update the folder label in the main window
-        folder_label.config(text="Selected Folder: " + str(main_folder))
+            # Get the list of subfolders (recordings) in the videos directory
+            videos_folder = Path(main_folder) / 'videos'
+            if not videos_folder.exists():
+                messagebox.showerror("Error", f"No 'videos' folder found in {main_folder}.")
+                return  # Exit if videos folder not found
 
-        # Create a Listbox for selecting subfolders
-        listbox = Listbox(subfolder_window, selectmode=MULTIPLE)
-        for folder in subfolders:
-            listbox.insert("end", folder)
+            subfolders = [f.name for f in videos_folder.iterdir() if f.is_dir()]
+            if not subfolders:
+                messagebox.showerror("Error", f"No subfolders found in 'videos' folder.")
+                return  # Exit if no subfolders in videos folder
 
-        # Add a scrollbar to the Listbox
-        scrollbar = Scrollbar(subfolder_window)
-        scrollbar.pack(side="right", fill="y")
-        listbox.config(yscrollcommand=scrollbar.set)
-        scrollbar.config(command=listbox.yview)
-        listbox.pack()
+            # Create a new window for selecting recordings
+            subfolder_window = Toplevel(root)
+            subfolder_window.title("Select Recordings")
 
-        def save_selection():
-            """
-            Saves the selected subfolders to 'idfolders' and closes the selection window.
-            """
-            selected_indices = listbox.curselection()
-            idfolders.clear()
-            idfolders.extend([str(videos_folder / subfolders[i]) for i in selected_indices])
-            subfolder_window.destroy()
+            # Center the subfolder window on the screen
+            subfolder_window.update_idletasks()
+            window_width = subfolder_window.winfo_width()
+            window_height = subfolder_window.winfo_height()
+            screen_width = subfolder_window.winfo_screenwidth()
+            screen_height = subfolder_window.winfo_screenheight()
+            x = (screen_width // 2) - (window_width // 2)
+            y = (screen_height // 2) - (window_height // 2)
+            subfolder_window.geometry(f'+{x}+{y}')
 
-        # Button to confirm selection of recordings
-        confirm_button = tk.Button(subfolder_window, text="Select", command=save_selection)
-        confirm_button.pack()
+            # Create a Listbox for selecting subfolders
+            listbox = Listbox(subfolder_window, selectmode=MULTIPLE)
+            for folder in subfolders:
+                listbox.insert("end", folder)
+
+            # Add a scrollbar to the Listbox
+            scrollbar = Scrollbar(subfolder_window)
+            scrollbar.pack(side="right", fill="y")
+            listbox.config(yscrollcommand=scrollbar.set)
+            scrollbar.config(command=listbox.yview)
+            listbox.pack()
+
+            def save_selection():
+                """
+                Saves the selected subfolders to 'idfolders' and closes the selection window.
+                """
+                selected_indices = listbox.curselection()
+                idfolders.clear()
+                idfolders.extend([str(videos_folder / subfolders[i]) for i in selected_indices])
+                subfolder_window.destroy()
+
+            # Button to confirm selection of recordings
+            confirm_button = tk.Button(subfolder_window, text="Select", command=save_selection)
+            confirm_button.pack()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {e}")
+            print(f"An error occurred in select_folder: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
 
     def on_submit():
         """
         Gathers all user-selected options and runs the processing scripts.
-
-        This function collects the values from the GUI elements and stores them
-        in the 'gui_options' dictionary. It then serializes the options to JSON
-        and executes the appropriate processing scripts based on the selections.
         """
         gui_options['idfolders'] = idfolders
         gui_options['main_folder'] = main_folder
@@ -119,22 +133,32 @@ def select_folder_and_options(root):
         gui_options['all_landmarks_lfc'] = slider_all_lfc.get()
 
         if not gui_options['idfolders']:
-            messagebox.showerror("Error", "No folder selected!")
+            messagebox.showerror("Error", "No recordings selected!")
             return  # Prevent further execution if no folders are selected
 
         gui_options_json = json.dumps(gui_options)
 
         # Execute the processing scripts based on user selections
-        if gui_options['run_mediapipe']:
-            print('Running Mediapipe.')
-            subprocess.run(['python', 'labels2d.py', gui_options_json])
+        try:
+            if gui_options['run_mediapipe']:
+                print('Running Mediapipe.')
+                # Import the module and call its main function
+                labels2d_main(gui_options_json)
 
-        if gui_options['run_triangulation']:
-            print('Triangulating.')
-            subprocess.run(['python', 'triangulaterefine.py', gui_options_json])
+            if gui_options['run_triangulation']:
+                print('Triangulating.')
+                # Import the module and call its main function
+                from athena.triangulaterefine import main as triangulate_main
+                triangulate_main(gui_options_json)
 
-        # Close the GUI
-        root.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred while processing: {e}")
+            print(f"An error occurred in on_submit: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
+            return  # Exit the function if an error occurs
+
+        # GUI remains open after processing
 
     def quit_application():
         """
@@ -146,7 +170,6 @@ def select_folder_and_options(root):
     def update_save_images_mp(*args):
         """
         Ensures that 'Save Images' is checked if 'Save Video' is checked in Mediapipe options.
-        If 'Save Images' is unchecked while 'Save Video' is checked, 'Save Video' is unchecked.
         """
         if var_save_video_mp.get():
             var_save_images_mp.set(True)
@@ -163,7 +186,6 @@ def select_folder_and_options(root):
     def update_save_images_triangulation(*args):
         """
         Ensures that 'Save Images' is checked if 'Save Video' is checked in Triangulation options.
-        If 'Save Images' is unchecked while 'Save Video' is checked, 'Save Video' is unchecked.
         """
         if var_save_video_triangulation.get():
             var_save_images_triangulation.set(True)
@@ -321,24 +343,32 @@ def select_folder_and_options(root):
     btn_quit = tk.Button(root, text="QUIT", command=quit_application)
     btn_quit.pack(pady=5)
 
-    # No need to call root.mainloop() here since it's already running in main()
-
-
 def main():
     # Create the root window
     root = tk.Tk()
     root.title("ATHENA: Automatically Tracking Hands Expertly with No Annotations")
-    # Hide the root window for now
+    # Withdraw the root window
     root.withdraw()
 
-    # Create the splash screen
-    splash = Toplevel()
+    # Create the splash screen on top of the root window
+    splash = Toplevel(root)
     splash.overrideredirect(True)
-    # Load the logo image
-    logo_path = 'logo.png'  # Adjust the path to your logo image
-    logo_image = tk.PhotoImage(file=logo_path)
-    window_width = logo_image.width()
-    window_height = logo_image.height()
+
+    # Load the logo image using importlib.resources
+    try:
+        with pkg_resources.path(package_name, 'logo.png') as logo_path:
+            logo_image = tk.PhotoImage(file=str(logo_path))
+    except Exception as e:
+        messagebox.showerror("Error", f"Unable to load logo image: {e}")
+        print(f"Error loading logo image: {e}", file=sys.stderr)
+        logo_image = None  # Or set a default image
+
+    if logo_image:
+        window_width = logo_image.width()
+        window_height = logo_image.height()
+    else:
+        window_width, window_height = 400, 300  # Default size if logo not loaded
+
     # Get the screen width and height
     screen_width = splash.winfo_screenwidth()
     screen_height = splash.winfo_screenheight()
@@ -346,21 +376,26 @@ def main():
     x = (screen_width - window_width) // 2
     y = (screen_height - window_height) // 2
     splash.geometry(f'{window_width}x{window_height}+{x}+{y}')
-    label = tk.Label(splash, image=logo_image)
-    label.pack()
-    # Keep a reference
-    label.image = logo_image
 
-    # After duration milliseconds, destroy splash and show root window
+    if logo_image:
+        label = tk.Label(splash, image=logo_image)
+        label.pack()
+        # Keep a reference
+        label.image = logo_image
+    else:
+        label = tk.Label(splash, text="ATHENA")
+        label.pack(expand=True)
+
+    # After duration milliseconds, destroy splash and continue
     def close_splash():
         splash.destroy()
-        root.deiconify()  # Show the root window
+        # Deiconify the root window
+        root.deiconify()
         select_folder_and_options(root)
 
-    splash.after(2000, close_splash)  # Display splash for 2000 milliseconds (2 seconds)
+    splash.after(2000, close_splash)
     # Start the event loop
     root.mainloop()
-
 
 if __name__ == '__main__':
     main()

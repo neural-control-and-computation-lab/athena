@@ -20,18 +20,13 @@ ATHENA (Automatically Tracking Hands Expertly with No Annotations) is a Python-b
 
 ### Installation Steps
 
-### 1. Clone the Repository
-
-git clone https://github.com/yourusername/athena-toolbox.git
-cd athena-toolbox
-
-### 2. Create a Conda Environment
-
-It is recommended to use a Conda environment to manage dependencies and avoid conflicts. We have provided an environment.yml file that contains all the necessary dependencies. Run the following command to create the environment with all packages:
 ```console
-conda env create -f environment.yml
-conda activate athena_env
+git clone https://github.com/neural-control-and-computation-lab/athena.git
+cd athena
+pip install .
 ```
+
+It is recommended to create a conda environment before installing to manage dependencies and avoid conflicts.
 
 ## Usage
 ### 1.	Organize Your Videos

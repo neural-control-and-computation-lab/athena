@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "athena"
+version = "0.1.0"
+description = "ATHENA: Automatically Tracking Hands Expertly with No Annotations"
+requires-python = ">=3.9"
+
+dependencies = [
+    "pyav",
+    "mediapipe",
+    "numpy",
+    "matplotlib",
+    "tqdm",
+    "scipy",
+    "pymovie"
+]
+
+[project.scripts]
+athena = "athena.athena:main"
+
+[project.optional-dependencies]
+
+[tool.setuptools.package-data]
+"athena" = ["labels2d.py", "triangulaterefine.py", "athena.py", "montage.py", "models/hand_landmarker.task", "models/pose_landmarker_full.task", "logo.png"]

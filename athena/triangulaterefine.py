@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 from scipy.signal import savgol_filter
-from labels2d import createvideo, readcalibration
+from athena.labels2d import createvideo, readcalibration
 
 
 def undistort_points(points, matrix, dist):
@@ -582,9 +582,7 @@ def visualize_3d(p3ds, save_path=None):
     plt.close(fig)
 
 
-if __name__ == '__main__':
-    # Load GUI options
-    gui_options_json = sys.argv[1]
+def main(gui_options_json):
     gui_options = json.loads(gui_options_json)
 
     # Set directories
