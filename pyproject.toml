@@ -7,6 +7,7 @@ name = "athena-tracking"
 dynamic = ["version"]
 authors = [
   { name="Jonathan Michaels", email="jmichae@yorku.ca" },
+    { name="Daanish Mulla", email=""}
 ]
 description = "ATHENA: Automatically Tracking Hands Expertly with No Annotations"
 readme = "README.md"
