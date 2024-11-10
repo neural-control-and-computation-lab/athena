@@ -1,5 +1,4 @@
 import os
-import sys
 import glob
 import json
 import time
@@ -13,7 +12,6 @@ import mediapipe as mp
 import concurrent.futures
 from mediapipe import solutions
 from mediapipe.framework.formats import landmark_pb2
-from mediapipe.tasks.python import vision
 from mediapipe.tasks.python.vision import (
     HandLandmarker,
     PoseLandmarker,
@@ -22,6 +20,11 @@ from mediapipe.tasks.python.vision import (
     RunningMode
 )
 from multiprocessing import Manager, set_start_method
+import importlib.resources as pkg_resources
+from athena import models  # Replace with the actual package path
+
+hand_model_path = pkg_resources.path(models, "hand_landmarker.task")
+pose_model_path = pkg_resources.path(models, "pose_landmarker_full.task")
 
 
 def createvideo(image_folder, extension, fps, output_folder, video_name):
@@ -273,10 +276,6 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
     kpts_cam_r_world = []
     kpts_body_world = []
     handscore = []
-
-    # Load HandLandmarker and PoseLandmarker models
-    hand_model_path = 'models/hand_landmarker.task'
-    pose_model_path = 'models/pose_landmarker_full.task'
 
     # Set GPU delegate based on user selection
     delegate = mp.tasks.BaseOptions.Delegate.GPU if use_gpu else mp.tasks.BaseOptions.Delegate.CPU
@@ -620,12 +619,10 @@ def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeff
             print(f"Camera {cam} processing complete.")
 
 
-if __name__ == '__main__':
+def main(gui_options_json):
     # Set the multiprocessing start method to 'spawn'
     set_start_method('spawn')
 
-    # Convert gui options back to dictionary
-    gui_options_json = sys.argv[1]
     gui_options = json.loads(gui_options_json)
 
     # Get the GUI options
