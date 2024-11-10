@@ -13,7 +13,7 @@ ATHENA (Automatically Tracking Hands Expertly with No Annotations) is a Python-b
 ## Installation
 ### Prerequisites
 - Operating System: Windows, macOS, or Linux.
-- Python Version: Python 3.7 or higher.
+- Python Version: Python 3.9 or higher.
 - Hardware Requirements:
 - CPU: Multi-core processor recommended for parallel processing.
 - GPU (Optional): NVIDIA GPU for accelerated processing (if GPU processing is enabled).
@@ -57,12 +57,10 @@ main_folder/
 - The calibration files are essential for accurate triangulation of 3D landmarks.
 
 ### 3. Running the Toolbox
-Start the GUI
-Run the main script to launch the GUI:
+Launch the GUI:
 ```console
-python athena.py
+athena
 ```
-
 
 1. Select Main Folder and Recordings 
    - Click on the “Select Folder” button to choose your main folder containing the videos and calibration directories.
