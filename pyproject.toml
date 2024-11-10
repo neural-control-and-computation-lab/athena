@@ -4,8 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "athena"
-version = "0.1.0"
+version = "0.2-beta"
 description = "ATHENA: Automatically Tracking Hands Expertly with No Annotations"
+long_description = "file: README.md"
+long_description_content_type = "text/markdown"
 requires-python = ">=3.9"
 
 dependencies = [
@@ -18,10 +20,14 @@ dependencies = [
     "pymovie"
 ]
 
+classifiers = [
+    "Programming Language :: Python :: 3.9",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
+
 [project.scripts]
 athena = "athena.athena:main"
-
-[project.optional-dependencies]
 
 [tool.setuptools.package-data]
 "athena" = ["labels2d.py", "triangulaterefine.py", "athena.py", "montage.py", "models/hand_landmarker.task", "models/pose_landmarker_full.task", "logo.png"]
