@@ -34,6 +34,9 @@ dependencies = [
 [tool.setuptools.dynamic]
 version = {attr = "athena.__version__"}
 
+[project.scripts]
+athena = "athena.athena:main"
+
 [tool.setuptools]
 packages = ["athena"]
 
