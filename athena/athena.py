@@ -5,8 +5,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, Listbox, MULTIPLE, Toplevel, Scrollbar
 from pathlib import Path
 import sys
-import importlib.resources as pkg_resources  # For accessing package resources
-from athena.labels2d import main as labels2d_main
+import importlib.resources as resources
 
 package_name = 'athena'
 
@@ -143,6 +142,7 @@ def select_folder_and_options(root):
             if gui_options['run_mediapipe']:
                 print('Running Mediapipe.')
                 # Import the module and call its main function
+                from athena.labels2d import main as labels2d_main
                 labels2d_main(gui_options_json)
 
             if gui_options['run_triangulation']:
@@ -354,20 +354,13 @@ def main():
     splash = Toplevel(root)
     splash.overrideredirect(True)
 
-    # Load the logo image using importlib.resources
-    try:
-        with pkg_resources.path(package_name, 'logo.png') as logo_path:
-            logo_image = tk.PhotoImage(file=str(logo_path))
-    except Exception as e:
-        messagebox.showerror("Error", f"Unable to load logo image: {e}")
-        print(f"Error loading logo image: {e}", file=sys.stderr)
-        logo_image = None  # Or set a default image
+    logo_image = None
+    with resources.path("athena", "logo.png") as logo_path:
+        logo_image = tk.PhotoImage(file=str(logo_path))
 
     if logo_image:
         window_width = logo_image.width()
         window_height = logo_image.height()
-    else:
-        window_width, window_height = 400, 300  # Default size if logo not loaded
 
     # Get the screen width and height
     screen_width = splash.winfo_screenwidth()
