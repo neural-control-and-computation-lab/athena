@@ -21,15 +21,14 @@ from mediapipe.tasks.python.vision import (
 )
 from multiprocessing import Manager, set_start_method
 from importlib import resources
-from contextlib import ExitStack
 
 hand_model_path = None
 pose_model_path = None
-
-with ExitStack() as stack:
-    hand_model_path = stack.enter_context(resources.path("athena.models", "hand_landmarker.task"))
-    pose_model_path = stack.enter_context(resources.path("athena.models", "pose_landmarker_full.task"))
-
+with resources.files("athena.models").joinpath("hand_landmarker.task") as h_path:
+    hand_model_path = h_path
+with resources.files("athena.models").joinpath("pose_landmarker_full.task") as p_path:
+    pose_model_path = p_path
+    
 
 def createvideo(image_folder, extension, fps, output_folder, video_name):
     """
