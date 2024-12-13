@@ -28,7 +28,7 @@ with resources.files("athena.models").joinpath("hand_landmarker.task") as h_path
     hand_model_path = h_path
 with resources.files("athena.models").joinpath("pose_landmarker_full.task") as p_path:
     pose_model_path = p_path
-    
+
 
 def createvideo(image_folder, extension, fps, output_folder, video_name):
     """
