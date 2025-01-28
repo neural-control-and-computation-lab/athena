@@ -20,14 +20,10 @@ from mediapipe.tasks.python.vision import (
     RunningMode
 )
 from multiprocessing import Manager, set_start_method
-from importlib import resources
 
-hand_model_path = None
-pose_model_path = None
-with resources.files("athena.models").joinpath("hand_landmarker.task") as h_path:
-    hand_model_path = h_path
-with resources.files("athena.models").joinpath("pose_landmarker_full.task") as p_path:
-    pose_model_path = p_path
+models_dir = os.path.join(os.path.dirname(__file__), "models")
+hand_model_path = os.path.join(models_dir, "hand_landmarker.task")
+pose_model_path = os.path.join(models_dir, "pose_landmarker_full.task")
 
 
 def createvideo(image_folder, extension, fps, output_folder, video_name):
