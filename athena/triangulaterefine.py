@@ -528,7 +528,11 @@ def visualize_3d(p3ds, save_path=None):
         p3ds (np.ndarray): 3D points, shape (n_frames, n_landmarks, 3).
         save_path (str, optional): If provided, saves the images to the specified path format.
     """
+
     colours = [
+        '#DDDDDD', '#DDDDDD', '#DDDDDD', '#DDDDDD',
+        '#009988', '#009988',
+        '#EE7733', '#EE7733',
         '#FDE7EF', '#FDE7EF', '#FDE7EF', '#FDE7EF',
         '#F589B1', '#F589B1', '#F589B1', '#F589B1',
         '#ED2B72', '#ED2B72', '#ED2B72', '#ED2B72',
@@ -542,6 +546,9 @@ def visualize_3d(p3ds, save_path=None):
     ]
 
     links = [
+        [11, 12], [11, 23], [12, 24], [23, 24],
+        [11, 13], [13, 15],
+        [12, 14], [14, 16],
         [33, 34], [34, 35], [35, 36], [36, 37],
         [33, 38], [38, 39], [39, 40], [40, 41],
         [33, 42], [42, 43], [43, 44], [44, 45],
@@ -554,11 +561,22 @@ def visualize_3d(p3ds, save_path=None):
         [54, 71], [71, 72], [72, 73], [73, 74]
     ]
 
+    # Determine range of visualization (based on mid 50th percentile of the hands)
+    percentile = 50 / 2
+    datalow = np.min(np.nanpercentile(p3ds[:, 33:74, :], percentile, axis=0), axis=0)
+    datahigh = np.max(np.nanpercentile(p3ds[:, 33:74, :], 100 - percentile, axis=0), axis=0)
+    dataint = datahigh - datalow
+    datamid = (dataint / 2) + datalow
+    largestint = np.max(dataint)
+    lowerlim = datamid - largestint
+    upperlim = datamid + largestint
+
+    # Generate figure
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
-    ax.set_xlim3d([-400, 400])
-    ax.set_ylim3d([-400, 400])
-    ax.set_zlim3d([600, 1400])
+    ax.set_xlim3d([lowerlim[0], upperlim[0]])
+    ax.set_ylim3d([lowerlim[1], upperlim[1]])
+    ax.set_zlim3d([lowerlim[2], upperlim[2]])
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
