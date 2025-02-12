@@ -481,10 +481,10 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
 
         # Save images if needed
         if save_images:
-            save_path = os.path.join(outdir_images_trial, f'cam{cam}', f'frame{framenum:04d}.png')
+            save_path = os.path.join(outdir_images_trial, f'cam{cam}', f'frame{framenum:06d}.png')
             result = cv.imwrite(save_path, cv.cvtColor(resized_frame, cv.COLOR_RGB2BGR))
             if not result:
-                print(f"Failed to save frame {framenum:04d} for cam {cam} at {save_path}")
+                print(f"Failed to save frame {framenum:06d} for cam {cam} at {save_path}")
 
         # Increment frame number
         framenum += 1

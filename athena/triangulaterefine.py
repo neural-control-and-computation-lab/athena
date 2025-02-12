@@ -482,7 +482,7 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
                             cv.circle(img, posn, 3, (0, 0, 0), thickness=1)
 
                     resized_frame = cv.resize(img, (display_width, display_height))
-                    output_path = os.path.join(outdir_images_refined, trialname, f'cam{cam}', f'frame{framenum:04d}.png')
+                    output_path = os.path.join(outdir_images_refined, trialname, f'cam{cam}', f'frame{framenum:06d}.png')
                     cv.imwrite(output_path, resized_frame)
 
                 elif framenum >= data.shape[1]:
@@ -742,7 +742,7 @@ def main(gui_options_json):
         # Visualize 3D data
         if gui_options.get('save_images_triangulation', False):
             print('Saving 3D images.')
-            visualize_3d(data3d, save_path=os.path.join(outdir_images_trialfolder, 'frame_{:04d}.png'))
+            visualize_3d(data3d, save_path=os.path.join(outdir_images_trialfolder, 'frame_{:06d}.png'))
 
         if gui_options.get('save_video_triangulation', False):
             print('Saving 3D video.')
