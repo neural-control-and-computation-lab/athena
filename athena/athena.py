@@ -128,6 +128,8 @@ def select_folder_and_options(root):
         gui_options['run_triangulation'] = var_triangulation.get()
         gui_options['save_images_triangulation'] = var_save_images_triangulation.get()
         gui_options['save_video_triangulation'] = var_save_video_triangulation.get()
+        gui_options['save_images_refine'] = var_save_images_refine.get()
+        gui_options['save_video_refine'] = var_save_video_refine.get()
         gui_options['hand_centroid_lfc'] = slider_hand_lfc.get()
         gui_options['all_landmarks_lfc'] = slider_all_lfc.get()
 
@@ -199,11 +201,27 @@ def select_folder_and_options(root):
         if not var_save_images_triangulation.get() and var_save_video_triangulation.get():
             var_save_video_triangulation.set(False)
 
+    def update_save_images_refine(*args):
+        """
+        Ensures that 'Save Images' is checked if 'Save Video' is checked in Refinement options.
+        """
+        if var_save_video_refine.get():
+            var_save_images_refine.set(True)
+        elif not var_save_images_refine.get() and var_save_video_refine.get():
+            var_save_video_refine.set(False)
+
+    def update_save_video_refine(*args):
+        """
+        Ensures that 'Save Video' is unchecked if 'Save Images' is unchecked in Refinement options.
+        """
+        if not var_save_images_refine.get() and var_save_video_refine.get():
+            var_save_video_refine.set(False)
+
     # Now set up the GUI components
     gui_options = {}  # Dictionary to hold GUI options
 
     # Set window size and center it on the screen
-    window_width, window_height = 600, 650
+    window_width, window_height = 600, 700
     screen_width, screen_height = root.winfo_screenwidth(), root.winfo_screenheight()
     position_x, position_y = (screen_width - window_width) // 2, (screen_height - window_height) // 2
     root.geometry(f'{window_width}x{window_height}+{position_x}+{position_y}')
@@ -216,13 +234,16 @@ def select_folder_and_options(root):
     var_triangulation = tk.BooleanVar(value=True)
     var_save_images_triangulation = tk.BooleanVar(value=False)
     var_save_video_triangulation = tk.BooleanVar(value=False)
+    var_save_images_refine = tk.BooleanVar(value=False)
+    var_save_video_refine = tk.BooleanVar(value=False)
 
     # Trace changes to 'Save Video' and 'Save Images' variables
     var_save_video_mp.trace_add('write', update_save_images_mp)
     var_save_images_mp.trace_add('write', update_save_video_mp)
-
     var_save_video_triangulation.trace_add('write', update_save_images_triangulation)
     var_save_images_triangulation.trace_add('write', update_save_video_triangulation)
+    var_save_video_refine.trace_add('write', update_save_images_refine)
+    var_save_images_refine.trace_add('write', update_save_video_refine)
 
     # General settings frame
     frame_general = tk.LabelFrame(root, text="General Settings", padx=10, pady=10)
@@ -327,13 +348,19 @@ def select_folder_and_options(root):
 
     # Checkboxes for saving images and videos during triangulation
     chk_save_images_triangulation = tk.Checkbutton(
-        frame_triangulation, text="Save Images", variable=var_save_images_triangulation
+        frame_triangulation, text="Save 3D Images", variable=var_save_images_triangulation
     )
     chk_save_images_triangulation.grid(row=2, column=0, padx=5, pady=5, sticky="w")
     chk_save_video_triangulation = tk.Checkbutton(
-        frame_triangulation, text="Save Video", variable=var_save_video_triangulation
+        frame_triangulation, text="Save 3D Video", variable=var_save_video_triangulation
     )
     chk_save_video_triangulation.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+
+    # Checkboxes for saving images and videos during refinement
+    chk_save_images_refine = tk.Checkbutton(frame_triangulation, text="Save Refined 2D Images", variable=var_save_images_refine)
+    chk_save_images_refine.grid(row=3, column=0, padx=5, pady=5, sticky="w")
+    chk_save_video_refine = tk.Checkbutton(frame_triangulation, text="Save Refined 2D Video", variable=var_save_video_refine)
+    chk_save_video_refine.grid(row=3, column=1, padx=5, pady=5, sticky="w")
 
     # Button to start processing
     btn_submit = tk.Button(root, text="GO", command=on_submit)
