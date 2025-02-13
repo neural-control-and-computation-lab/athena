@@ -482,8 +482,8 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
                             cv.circle(img, posn, 3, (0, 0, 0), thickness=1)
 
                     resized_frame = cv.resize(img, (display_width, display_height))
-                    output_path = os.path.join(outdir_images_refined, trialname, f'cam{cam}', f'frame{framenum:06d}.png')
-                    cv.imwrite(output_path, resized_frame)
+                    output_path = os.path.join(outdir_images_refined, trialname, f'cam{cam}', f'frame{framenum:06d}.jpg')
+                    cv.imwrite(output_path, resized_frame, [cv.IMWRITE_JPEG_QUALITY, 50])
 
                 elif framenum >= data.shape[1]:
                     break
@@ -585,7 +585,7 @@ def visualize_3d(p3ds, save_path=None):
     lines = [ax.plot([], [], [], linewidth=5, color=colours[i], alpha=0.7)[0] for i in range(len(links))]
     scatter = ax.scatter([], [], [], marker='o', s=10, lw=1, c='white', edgecolors='black', alpha=0.7)
 
-    for framenum in range(len(p3ds)):
+    for framenum in tqdm(range(len(p3ds))):
         for linknum, (link, line) in enumerate(zip(links, lines)):
             line.set_data([p3ds[framenum, link[0], 0], p3ds[framenum, link[1], 0]],
                           [p3ds[framenum, link[0], 1], p3ds[framenum, link[1], 1]])
@@ -650,12 +650,6 @@ def main(gui_options_json):
         # Video parameters
         nframes = data_2d_combined.shape[1]
         nlandmarks = data_2d_combined.shape[2]
-
-        # Output directories for the trial
-        os.makedirs(os.path.join(outdir_images_refined, trialname), exist_ok=True)
-        os.makedirs(os.path.join(outdir_video, trialname), exist_ok=True)
-        for cam in range(ncams):
-            os.makedirs(os.path.join(outdir_images_refined, trialname, f'cam{cam}'), exist_ok=True)
 
         # Switch hands and smooth
         data_2d = switch_hands(
@@ -733,22 +727,22 @@ def main(gui_options_json):
         data3d = data3d.reshape((int(len(data3d) / nlandmarks), nlandmarks, 3))
         np.save(os.path.join(outdir_data3d, trialname, f'{trialname}_3Dlandmarks'), data3d)
 
-        # Output directories for visualizations
-        outdir_images_trialfolder = os.path.join(outdir_images_refined, trialname, 'data3d')
+        # Output directories for the trial (visualization)
         outdir_video_trialfolder = os.path.join(outdir_video, trialname)
-        os.makedirs(outdir_images_trialfolder, exist_ok=True)
-        os.makedirs(outdir_video_trialfolder, exist_ok=True)
+        outdir_3dimages_trialfolder = os.path.join(outdir_images_refined, trialname, 'data3d')
 
         # Visualize 3D data
         if gui_options.get('save_images_triangulation', False):
+            os.makedirs(outdir_3dimages_trialfolder, exist_ok=True)
             print('Saving 3D images.')
-            visualize_3d(data3d, save_path=os.path.join(outdir_images_trialfolder, 'frame_{:06d}.png'))
+            visualize_3d(data3d, save_path=os.path.join(outdir_3dimages_trialfolder, 'frame_{:06d}.jpg'))
 
         if gui_options.get('save_video_triangulation', False):
+            os.makedirs(outdir_video_trialfolder, exist_ok=True)
             print('Saving 3D video.')
             createvideo(
-                image_folder=outdir_images_trialfolder,
-                extension='.png',
+                image_folder=outdir_3dimages_trialfolder,
+                extension='.jpg',
                 fps=fps,
                 output_folder=outdir_video_trialfolder,
                 video_name='data3d.mp4'
@@ -756,6 +750,9 @@ def main(gui_options_json):
 
         # Visualize 2D labels
         if gui_options.get('save_images_refine', False):
+            os.makedirs(os.path.join(outdir_images_refined, trialname), exist_ok=True)
+            for cam in range(ncams):
+                os.makedirs(os.path.join(outdir_images_refined, trialname, f'cam{cam}'), exist_ok=True)
             print('Saving refined 2D images.')
             visualizelabels(
                 vidnames,
@@ -765,13 +762,14 @@ def main(gui_options_json):
             )
 
         if gui_options.get('save_video_refine', False):
+            os.makedirs(outdir_video_trialfolder, exist_ok=True)
             print('Saving refined 2D videos.')
             for cam in range(ncams):
                 imagefolder = os.path.join(outdir_images_refined, trialname, f'cam{cam}')
                 createvideo(
                     image_folder=imagefolder,
-                    extension='.png',
+                    extension='.jpg',
                     fps=fps,
-                    output_folder=os.path.join(outdir_video, trialname),
+                    output_folder=outdir_video_trialfolder,
                     video_name=f'cam{cam}_refined.mp4'
                 )
