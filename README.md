@@ -15,20 +15,24 @@ ATHENA (Automatically Tracking Hands Expertly with No Annotations) is a Python-b
 ## Installation
 ### Prerequisites
 - Operating System: Windows, macOS, or Linux.
-- Python Version: Python 3.9 or higher.
+- Python Version: Python 3.12
 - Hardware Requirements:
 - CPU: Multi-core processor recommended for parallel processing.
 - GPU (Optional): NVIDIA GPU for accelerated processing (if GPU processing is enabled).
 
 ### Installation Steps
 
+Use your package manager of choice to create an environment with Python 3.12. For example, using conda:
+```console
+conda create -n athena python=3.12
+conda activate athena
+```
+Then install the package:
 ```console
 git clone https://github.com/neural-control-and-computation-lab/athena.git
 cd athena
 pip install .
 ```
-
-It is recommended to create a conda environment before installing to manage dependencies and avoid conflicts.
 
 ## Usage
 ### 1.	Organize Your Videos
