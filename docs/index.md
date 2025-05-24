@@ -1,9 +1,8 @@
+<link rel="stylesheet" href="assets/css/custom.css">
 # ATHENA Toolbox
 ATHENA (Automatically Tracking Hands Expertly with No Annotations) is a Python-based toolbox designed to process multi-camera video recordings, extract 2D and 3D body and hand landmarks using MediaPipe, and perform triangulation and refinement of these landmarks. The toolbox provides a user-friendly GUI for selecting videos and configuring processing options.
 
-<img src="athena/logo.png" alt="logo" width="240"/>
-
-<video width="640" height="360" controls>
+<video width="1280" height="720" controls>
   <source src="assets/compilation.mp4" type="video/mp4">
 </video>
 
