@@ -4,7 +4,7 @@ title: ATHENA
 
 <style>
 body {
-  background: url("../assets/logo.png") no-repeat center center fixed;
+  background: url("/athena/docs/assets/logo.png") no-repeat center center fixed;
   background-size: 60%;
   background-color: rgba(255, 255, 255, 0.8);  /* light overlay */
 }
