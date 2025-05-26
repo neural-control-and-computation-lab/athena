@@ -1,14 +1,6 @@
-<style>
-body {
-  background: url("docs/assets/logo.png") no-repeat center center fixed;
-  background-size: 60%;
-  background-color: rgba(255, 255, 255, 0.5);  /* light overlay */
-}
-</style>
-
 # ATHENA Toolbox
-ATHENA (Automatically Tracking Hands Expertly with No Annotations) is a Python-based toolbox designed to process multi-camera video recordings, extract 2D and 3D body and hand landmarks using MediaPipe, and perform triangulation and refinement of these landmarks. The toolbox provides a user-friendly GUI for selecting videos and configuring processing options.
-<img src="athena/logo.png" alt="logo" width="120"/>
+ATHENA (Automatically Tracking Hands Expertly with No Annotations) is an opensource Python-based toolbox designed to process multi-camera video recordings, extract 2D and 3D body and hand landmarks using MediaPipe, and perform triangulation and refinement of these landmarks. The toolbox provides a user-friendly GUI for selecting videos and configuring processing options.
+<img src="docs/assets/logo.png" alt="logo" width="120"/>
 
 
 <video width="910" height="512" controls>
@@ -139,6 +131,3 @@ A: You can increase the number of parallel processes if your CPU has more cores.
 
 Q: Where can I find the output data after processing?\
 A: Processed data, images, and videos are saved in the images/, imagesrefined/, landmarks/, and videos_processed/ directories within your main folder.
-
-Q: I encounter an error related to av or PyAV.\
-A: Ensure that av is installed via Conda using the conda install av -c conda-forge command, as it may have dependencies that are better handled by Conda.
