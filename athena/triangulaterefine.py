@@ -190,8 +190,13 @@ def smooth3d(data3d, fps, centroid_frequency_cutoff=5, centroid_polyorder=3,
     data3d_smoothed = data3d.copy()
 
     for _ in range(iterations):
+        
         # Aggressive low-pass filtering of hand centroids
         for hand_indices in [range(33, 54), range(54, 75)]:
+
+            if centroid_frequency_cutoff == -1:
+                break
+
             # Compute centroid for each frame
             centroids = np.nanmean(data3d_smoothed[:, hand_indices, :], axis=1)
 
@@ -225,6 +230,10 @@ def smooth3d(data3d, fps, centroid_frequency_cutoff=5, centroid_polyorder=3,
 
         # Less aggressive filtering of all points
         for coord in range(3):
+            
+            if point_frequency_cutoff == -1:
+                break
+
             for landmark in range(n_landmarks):
                 data = data3d_smoothed[:, landmark, coord]
                 nan_mask = np.isnan(data)
@@ -241,6 +250,10 @@ def smooth3d(data3d, fps, centroid_frequency_cutoff=5, centroid_polyorder=3,
 
         # Enforce bone-length constraints
         for frame in range(n_frames):
+            
+            if threshold_factor == -1:
+                break
+
             for link in links:
                 p1_idx, p2_idx = link
                 point1 = data3d_smoothed[frame, p1_idx]
@@ -429,9 +442,7 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
         stream.thread_type = 'AUTO'
 
         colors = [
-            '#009988', '#009988', '#009988', '#009988',
-            '#EE7733', '#EE7733', '#EE7733', '#EE7733',
-            '#DDDDDD', '#DDDDDD', '#DDDDDD', '#DDDDDD', '#DDDDDD',
+            '#DDDDDD', '#DDDDDD', '#DDDDDD', '#DDDDDD',
             '#009988', '#009988',
             '#EE7733', '#EE7733',
             '#FDE7EF', '#FDE7EF', '#FDE7EF', '#FDE7EF',
@@ -447,9 +458,7 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
         ]
 
         links = [
-            [0, 1], [1, 2], [2, 3], [3, 7],
-            [0, 4], [4, 5], [5, 6], [6, 8],
-            [9, 10], [11, 12], [11, 23], [12, 24], [23, 24],
+            [11, 12], [11, 23], [12, 24], [23, 24],
             [11, 13], [13, 15],
             [12, 14], [14, 16],
             [33, 34], [34, 35], [35, 36], [36, 37],
@@ -577,9 +586,9 @@ def visualize_3d(p3ds, save_path=None):
     ax.set_xlim3d([lowerlim[0], upperlim[0]])
     ax.set_ylim3d([lowerlim[1], upperlim[1]])
     ax.set_zlim3d([lowerlim[2], upperlim[2]])
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
+    ax.set_xlabel('X (mm)')
+    ax.set_ylabel('Y (mm)')
+    ax.set_zlabel('Z (mm)')
     ax.view_init(-60, -50)
 
     lines = [ax.plot([], [], [], linewidth=5, color=colours[i], alpha=0.7)[0] for i in range(len(links))]
@@ -651,7 +660,7 @@ def main(gui_options_json):
         nframes = data_2d_combined.shape[1]
         nlandmarks = data_2d_combined.shape[2]
 
-        # Switch hands and smooth
+        # Switch hands
         data_2d = switch_hands(
             data_2d_combined,
             ncams,
@@ -702,8 +711,10 @@ def main(gui_options_json):
 
         # Smooth 3D data
         data3d = smooth3d(data3d, fps=fps,
-                          centroid_frequency_cutoff=gui_options['hand_centroid_lfc'],
-                          point_frequency_cutoff=gui_options['all_landmarks_lfc'])
+            centroid_frequency_cutoff=-1,
+            point_frequency_cutoff=gui_options['all_landmarks_lfc'],
+            iterations=1,
+            threshold_factor=-1)
 
         # Re-flatten
         data3d = data3d.reshape(-1, 3)
