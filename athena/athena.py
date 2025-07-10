@@ -6,6 +6,7 @@ from tkinter import filedialog, messagebox, Listbox, MULTIPLE, Toplevel, Scrollb
 from pathlib import Path
 import sys
 import importlib.resources as resources
+import toml
 
 package_name = 'athena'
 
@@ -40,7 +41,16 @@ def select_folder_and_options(root):
             nonlocal num_cameras
             calibration_folder = os.path.join(main_folder, 'calibration')
             if os.path.exists(calibration_folder):
-                num_cameras = len(glob.glob(os.path.join(calibration_folder, '*.yaml')))
+
+                if glob.glob(os.path.join(main_folder, 'calibration', '*.yaml')):
+                    calfileext = '*.yaml'
+                    num_cameras = len(glob.glob(os.path.join(calibration_folder, '*.yaml')))
+                elif glob.glob(os.path.join(main_folder, 'calibration', '*.toml')):
+                    calfileext = '*.toml'
+                    calfile = sorted(glob.glob(os.path.join(main_folder, 'calibration', calfileext)))
+                    cal = toml.load(calfile)
+                    num_cameras = len(cal) - 1
+
             else:
                 num_cameras = 0
 

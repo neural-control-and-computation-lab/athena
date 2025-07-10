@@ -28,6 +28,7 @@ dependencies = [
     "tqdm",
     "scipy",
     "pymovie",
+    "toml",
 ]
 
 [tool.setuptools.dynamic]

@@ -621,10 +621,14 @@ def main(gui_options_json):
     trials = sorted([os.path.join(main_folder, 'landmarks', os.path.basename(f)) for f in idfolders])
 
     # Camera calibration
-    calfiles = sorted(glob.glob(os.path.join(main_folder, 'calibration', '*.yaml')))
-    cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
+    if glob.glob(os.path.join(main_folder, 'calibration', '*.yaml')):
+        calfileext = '*.yaml'
+    elif glob.glob(os.path.join(main_folder, 'calibration', '*.toml')):
+        calfileext = '*.toml'
+    calfiles = sorted(glob.glob(os.path.join(main_folder, 'calibration', calfileext)))
+    cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles, calfileext)
     cam_mats_extrinsic = np.array(cam_mats_extrinsic)
-    ncams = len(calfiles)
+    ncams = cam_mats_extrinsic.shape[0]
 
     # Output directories
     outdir_images_refined = os.path.join(main_folder, 'imagesrefined')
@@ -700,7 +704,7 @@ def main(gui_options_json):
         data3d = data3d.reshape((int(len(data3d) / nlandmarks), nlandmarks, 3))
 
         # Get FPS from video
-        vidnames = sorted(glob.glob(os.path.join(main_folder, 'videos', trialname, '*.avi')))
+        vidnames = sorted(glob.glob(os.path.join(main_folder, 'videos', trialname, '*.avi')) + glob.glob(os.path.join(main_folder, 'videos', trialname, '*.mp4')))
         container = av.open(vidnames[0])
         video_stream = container.streams.video[0]
         if video_stream.average_rate is not None and video_stream.average_rate.denominator != 0:

@@ -5,6 +5,7 @@ import time
 import threading
 import tkinter as tk
 import tkinter.ttk as ttk  # For the progress bar
+import toml
 import av
 import cv2 as cv
 import numpy as np
@@ -174,7 +175,7 @@ def draw_hand_landmarks_on_image(rgb_image, detection_result):
     return annotated_image
 
 
-def readcalibration(calibration_files):
+def readcalibration(calibration_files, extension):
     """
     Reads camera calibration parameters from YAML files.
 
@@ -191,19 +192,41 @@ def readcalibration(calibration_files):
     intrinsics = []
     dist_coeffs = []
 
-    for cam_file in calibration_files:
-        # Grab camera calibration parameters
-        cam_yaml = cv.FileStorage(cam_file, cv.FILE_STORAGE_READ)
-        cam_int = cam_yaml.getNode("intrinsicMatrix").mat()
-        cam_dist = cam_yaml.getNode("distortionCoefficients").mat()
-        cam_rotn = cam_yaml.getNode("R").mat().transpose()
-        cam_transln = cam_yaml.getNode("T").mat()
-        cam_transform = transformationmatrix(cam_rotn, cam_transln)
+    if extension == '*.yaml':
+        for cam_file in calibration_files:
+            # Grab camera calibration parameters
+            cam_yaml = cv.FileStorage(cam_file, cv.FILE_STORAGE_READ)
+            cam_int = cam_yaml.getNode("intrinsicMatrix").mat()
+            cam_dist = cam_yaml.getNode("distortionCoefficients").mat()
+            cam_rotn = cam_yaml.getNode("R").mat().transpose()
+            cam_transln = cam_yaml.getNode("T").mat()
+            cam_transform = transformationmatrix(cam_rotn, cam_transln)
 
-        # Store calibration parameters
-        extrinsics.append(cam_transform)
-        intrinsics.append(cam_int.transpose())
-        dist_coeffs.append(cam_dist.reshape(-1))
+            # Store calibration parameters
+            extrinsics.append(cam_transform)
+            intrinsics.append(cam_int.transpose())
+            dist_coeffs.append(cam_dist.reshape(-1))
+
+    elif extension == '*.toml':
+        cal = toml.load(calibration_files)
+        ncams = len(cal) - 1
+        
+        for cam in range(ncams):
+            camname = 'cam_' + str(cam)
+
+            # Camera extrinsic parameters
+            cam_rotn = np.array(cal[camname]['rotation'])
+            cam_transln = np.array(cal[camname]['translation'])
+            cam_transform = transformationmatrix(rotationmatrix(cam_rotn), cam_transln)
+            extrinsics.append(cam_transform)
+            
+            # Camera intrinsic parameters
+            cam_int = np.array(cal[camname]['matrix'])
+            intrinsics.append(cam_int)
+
+            # Camera distortion coefficients
+            cam_dist = np.array(cal[camname]['distortions'])
+            dist_coeffs.append(cam_dist)
 
     return extrinsics, intrinsics, dist_coeffs
 
@@ -222,6 +245,26 @@ def transformationmatrix(R, t):
     T = np.concatenate((R, t.reshape(3, 1)), axis=1)
     T = np.vstack((T, [0, 0, 0, 1]))
     return T
+
+
+def rotationmatrix(r):
+    """
+    Create rotation matrix from a rotation vector.
+
+    :param r: Axis of rotation.
+    :return: 3x3 rotation matrix.
+    """
+
+    theta = np.linalg.norm(r)
+    if theta == 0:
+        return np.eye(3)
+    else:
+        axis = r / theta
+        K = np.array([[0, -axis[2], axis[1]],
+                      [axis[2], 0, -axis[0]],
+                      [-axis[1], axis[0], 0]])
+        R = np.eye(3) + np.sin(theta) * K + (1 - np.cos(theta)) * np.dot(K, K)
+        return R
 
 
 def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_coeffs, undistort_map, display_width,
@@ -562,6 +605,7 @@ def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeff
 
     # Get frame dimensions and undistort maps from the first frame of each camera
     for cam, input_stream in enumerate(input_streams):
+        frame_count = 0
         container = av.open(input_stream)
         for packet in container.demux(video=0):
             for frame in packet.decode():
@@ -577,8 +621,14 @@ def run_mediapipe(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeff
                     cv.CV_16SC2
                 )
                 undistort_maps.append((map1, map2))
-                break  # Only need one frame
-            break  # Only need one packet
+
+                # Need to force this to occur once a frame is read, otherwise it breaks too early for some vids
+                frame_count += 1 
+                if frame_count == 1:  # Only need one frame
+                    break
+            if frame_count == 1:  # Only need one packet
+                break
+
         container.close()
 
     # Update gui_options with additional information
@@ -725,8 +775,12 @@ def main(gui_options_json):
                 gui_options['save_video_mp'] = False  # Adjust the setting in gui_options
 
             # Gather camera calibration parameters
-            calfiles = sorted(glob.glob(os.path.join(main_folder, 'calibration', '*.yaml')))
-            cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles)
+            if glob.glob(os.path.join(main_folder, 'calibration', '*.yaml')):
+                calfileext = '*.yaml'
+            elif glob.glob(os.path.join(main_folder, 'calibration', '*.toml')):
+                calfileext = '*.toml'
+            calfiles = sorted(glob.glob(os.path.join(main_folder, 'calibration', calfileext)))
+            cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs = readcalibration(calfiles, calfileext)
 
             total_trials = len(trialfolders)
             processed_trials = 0
@@ -735,7 +789,7 @@ def main(gui_options_json):
                 trialname = os.path.basename(trial)
                 print(f"Processing trial: {trialname}")
 
-                vidnames = sorted(glob.glob(os.path.join(trial, '*.avi')))
+                vidnames = sorted(glob.glob(os.path.join(trial, '*.avi')) + glob.glob(os.path.join(trial, '*.mp4')))
                 ncams = len(vidnames)
 
                 container = av.open(vidnames[0])
