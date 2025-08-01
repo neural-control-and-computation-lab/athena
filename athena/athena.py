@@ -340,21 +340,13 @@ def select_folder_and_options(root):
     frame_triangulation.columnconfigure(0, weight=1)
     frame_triangulation.columnconfigure(1, weight=1)
 
-    # Hand centroid low-frequency cutoff
-    slider_hand_lfc = tk.Scale(
-        frame_triangulation, from_=1, to=20, resolution=1, orient=tk.HORIZONTAL,
-        label="Hand centroid: low-freq cutoff (Hz)"
-    )
-    slider_hand_lfc.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
-    slider_hand_lfc.set(5)
-
     # All landmark low-frequency cutoff
     slider_all_lfc = tk.Scale(
         frame_triangulation, from_=1, to=50, resolution=1, orient=tk.HORIZONTAL,
         label="All points: low-freq cutoff (Hz)"
     )
-    slider_all_lfc.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-    slider_all_lfc.set(20)
+    slider_all_lfc.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+    slider_all_lfc.set(10)
 
     # Checkboxes for saving images and videos during triangulation
     chk_save_images_triangulation = tk.Checkbutton(

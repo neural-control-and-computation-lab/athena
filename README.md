@@ -1,7 +1,12 @@
 # ATHENA Toolbox
 ATHENA (Automatically Tracking Hands Expertly with No Annotations) is a Python-based toolbox designed to process multi-camera video recordings, extract 2D and 3D body and hand landmarks using MediaPipe, and perform triangulation and refinement of these landmarks. The toolbox provides a user-friendly GUI for selecting videos and configuring processing options.
 
-<img src="athena/logo.png" alt="logo" width="240"/>
+<table>
+  <tr>
+    <td><img src="athena/logo.png" alt="logo" width="240"/></td>
+    <td><img src="athena/gui.png" alt="GUI screenshot" width="300"/></td>
+  </tr>
+</table>
 
 ## Features
 - Multi-Camera Processing: Handles multiple camera inputs for comprehensive analysis.
@@ -25,18 +30,19 @@ ATHENA (Automatically Tracking Hands Expertly with No Annotations) is a Python-b
 Use your package manager of choice to create an environment with Python 3.12. For example, using conda:
 ```console
 conda create -n athena python=3.12
+```
+Activate the environment:
+```console
 conda activate athena
 ```
 Then install the package:
 ```console
-git clone https://github.com/neural-control-and-computation-lab/athena.git
-cd athena
-pip install .
+pip install athena-tracking
 ```
 
 ## Usage
 ### 1.	Organize Your Videos
-Place your video recordings in a main folder, structured as follows:
+Place your synchronized video recordings in a main folder, structured as follows:
 ```console
 main_folder/
 ├── videos/
@@ -56,6 +62,8 @@ main_folder/
 
 - Each recording folder should contain video files from multiple cameras (e.g., cam0.avi, cam1.avi).
 - The calibration folder should contain calibration files (.yaml) for each camera.
+
+For recording and calibrating your cameras, we highly recommend the [JARVIS Toolbox](https://jarvis-mocap.github.io/jarvis-docs/).
 
 ### 2.	Ensure Calibration Files are Correct
 - Calibration files should be labelled with camera names that match recorded videos.
@@ -82,10 +90,13 @@ athena
      - Save Video: Save videos with landmarks overlaid (requires “Save Images” to be enabled).
      - Minimum Hand Detection & Tracking Confidence: Adjust the confidence threshold for hand detection (default is 0.9).
      - Minimum Pose Detection & Tracking Confidence: Adjust the confidence threshold for pose detection (default is 0.9).
-   - Triangulation:
-     - Triangulation: Check this option to perform 3D triangulation of landmarks.
-     - Save Images: Save images of the 3D landmarks.
-     - Save Video: Save videos of the 3D landmarks.
+   - Run Triangulation and Refinement:
+     - Run Triangulation and Refinement: Check this option to perform 3D triangulation of landmarks and filtering.
+     - All points: low-freq cutoff (Hz): Set the low-frequency cutoff for smoothing of all points (default is 10 Hz).
+     - Save 3D Images: Save images of the 3D landmarks.
+     - Save 3D Video: Save videos of the 3D landmarks.
+     - Save Refined 2D Images: Save images of the refined 2D landmarks after triangulation.
+     - Save Refined 2D Video: Save videos of the refined 2D landmarks
 3. Start Processing
    - Click the “GO” button to start processing.
    - A progress window will appear, showing the processing progress and average FPS.
@@ -121,12 +132,10 @@ A: Yes, you can process videos from a single camera to extract 2D landmarks. How
 
 Q: How do I obtain the calibration files?\
 A: Calibration files are generated using camera calibration techniques, often involving capturing images of a known pattern (like a chessboard) from different angles. You can use OpenCV’s calibration tools or other software to create these .yaml files.
+ATHENA accepts calibration files created by JARVIS or Anipose without any modification.
 
 Q: The processing is slow. How can I speed it up?\
 A: You can increase the number of parallel processes if your CPU has more cores. Enabling GPU processing can also significantly speed up the landmark detection step. Additionally, processing a smaller fraction of frames can reduce computation time.
 
 Q: Where can I find the output data after processing?\
 A: Processed data, images, and videos are saved in the images/, imagesrefined/, landmarks/, and videos_processed/ directories within your main folder.
-
-Q: I encounter an error related to av or PyAV.\
-A: Ensure that av is installed via Conda using the conda install av -c conda-forge command, as it may have dependencies that are better handled by Conda.
