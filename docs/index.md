@@ -10,8 +10,8 @@ ATHENA (Automatically Tracking Hands Expertly with No Annotations) is a Python-b
 
 <table>
   <tr>
-    <td><img src="athena/logo.png" alt="logo" width="240"/></td>
-    <td><img src="athena/gui.png" alt="GUI screenshot" width="300"/></td>
+    <td><img src="assets/logo.png" alt="logo" width="240"/></td>
+    <td><img src="assets/gui.png" alt="GUI screenshot" width="400"/></td>
   </tr>
 </table>
 
