@@ -140,7 +140,6 @@ def select_folder_and_options(root):
         gui_options['save_video_triangulation'] = var_save_video_triangulation.get()
         gui_options['save_images_refine'] = var_save_images_refine.get()
         gui_options['save_video_refine'] = var_save_video_refine.get()
-        gui_options['hand_centroid_lfc'] = slider_hand_lfc.get()
         gui_options['all_landmarks_lfc'] = slider_all_lfc.get()
 
         if not gui_options['idfolders']:
