@@ -51,7 +51,7 @@ pip install athena-tracking
 
 Or to get the latest version directly from GitHub:
 ```console
-pip git+https://github.com/neural-control-and-computation-lab/athena.git
+pip install git+https://github.com/neural-control-and-computation-lab/athena.git
 ```
 
 ## Usage
