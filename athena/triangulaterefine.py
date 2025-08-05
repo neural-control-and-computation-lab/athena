@@ -459,8 +459,8 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
 
         links = [
             [11, 12], [11, 23], [12, 24], [23, 24],
-            [11, 13], [13, 15],
-            [12, 14], [14, 16],
+            [11, 13], [13, 54],
+            [12, 14], [14, 33],
             [33, 34], [34, 35], [35, 36], [36, 37],
             [33, 38], [38, 39], [39, 40], [40, 41],
             [33, 42], [42, 43], [43, 44], [44, 45],
@@ -484,11 +484,6 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
                             posn_start = tuple(data[cam, framenum, start, :2].astype(int))
                             posn_end = tuple(data[cam, framenum, end, :2].astype(int))
                             cv.line(img, posn_start, posn_end, hex2bgr(colors[number]), 2)
-
-                    for landmark in range(21):
-                        if not np.isnan(data[cam, framenum, landmark, 0]):
-                            posn = tuple(data[cam, framenum, landmark, :2].astype(int))
-                            cv.circle(img, posn, 3, (0, 0, 0), thickness=1)
 
                     resized_frame = cv.resize(img, (display_width, display_height))
                     output_path = os.path.join(outdir_images_refined, trialname, f'cam{cam}', f'frame{framenum:06d}.jpg')
@@ -556,8 +551,8 @@ def visualize_3d(p3ds, save_path=None):
 
     links = [
         [11, 12], [11, 23], [12, 24], [23, 24],
-        [11, 13], [13, 15],
-        [12, 14], [14, 16],
+        [11, 13], [13, 54],
+        [12, 14], [14, 33],
         [33, 34], [34, 35], [35, 36], [36, 37],
         [33, 38], [38, 39], [39, 40], [40, 41],
         [33, 42], [42, 43], [43, 44], [44, 45],
