@@ -40,6 +40,11 @@ Then install the package:
 pip install athena-tracking
 ```
 
+Or to get the latest version directly from GitHub:
+```console
+pip git+https://github.com/neural-control-and-computation-lab/athena.git
+```
+
 ## Usage
 ### 1.	Organize Your Videos
 Place your synchronized video recordings in a main folder, structured as follows:

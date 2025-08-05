@@ -38,13 +38,20 @@ Use your package manager of choice to create an environment with Python 3.12. Fo
 ```console
 conda create -n athena python=3.12
 ```
+
 Activate the environment:
 ```console
 conda activate athena
 ```
+
 Then install the package:
 ```console
 pip install athena-tracking
+```
+
+Or to get the latest version directly from GitHub:
+```console
+pip git+https://github.com/neural-control-and-computation-lab/athena.git
 ```
 
 ## Usage
