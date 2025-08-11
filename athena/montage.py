@@ -51,15 +51,21 @@ def main():
         allvideos = vidlist.copy()
         allvideos.append(video3d)
         vids = [VideoFileClip(video) for video in allvideos]
+        nvids = len(vids) - 1
 
         # Resize 3D data to appear bigger
         vids[-1] = vids[-1].resize(1.5)
 
         # Combine videos together
-        top_row = clips_array([vids[0:4]])
-        mid_row = clips_array([vids[4:-1]])
         bot_row = clips_array([[vids[-1]]])
-        final_video = clips_array([[top_row], [mid_row], [bot_row]])
+        if nvids <= 4:
+            top_row = clips_array([vids[:-1]])
+            final_video = clips_array([[top_row], [bot_row]])
+        else:
+            half = round(nvids / 2)
+            top_row = clips_array([vids[:half]])
+            mid_row = clips_array([vids[half:-1]])
+            final_video = clips_array([[top_row], [mid_row], [bot_row]])
         output_path = processedvideos + trialname + '/compilation.mp4'
         final_video.write_videofile(output_path, codec='libx264', fps=60)
 
