@@ -29,6 +29,7 @@ dependencies = [
     "scipy",
     "pymovie",
     "toml",
+    "moviepy"
 ]
 
 [tool.setuptools.dynamic]
@@ -36,6 +37,7 @@ version = {attr = "athena.__version__"}
 
 [project.scripts]
 athena = "athena.athena:main"
+athena-montage = "athena.montage:main"
 
 [tool.setuptools]
 packages = ["athena"]

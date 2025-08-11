@@ -126,6 +126,11 @@ main_folder/
 └── ...                    # Original videos and calibration files
 ```
 
+To create a single video that contains all videos (2D and 3D), you can use the 'montage' script and select the recording folder using the popup window:
+```console
+python -m athena.montage
+```
+
 ### Troubleshooting
 - MediaPipe Errors: Ensure that MediaPipe is correctly installed and compatible with your Python version. MediaPipe may have specific requirements, especially for GPU support.
 - Calibration Mismatch: Verify that the number of calibration files matches the number of camera videos.
