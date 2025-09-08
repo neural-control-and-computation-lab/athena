@@ -837,7 +837,7 @@ def main(gui_options_json):
                             extension='.png',
                             fps=fps,
                             output_folder=outdir_video_trial,
-                            video_name=f'cam{cam}.mp4'
+                            video_name=f'cam{cam}_mediapipe.mp4'
                         )
 
                 # Update progress per trial

@@ -29,8 +29,9 @@ def main():
     trialfolders = sorted(glob.glob(processedvideos + '/*'))
     ntrials = len(trialfolders)
 
-    # Use raw or 2D predictions overlaid raw?
+    # Use raw, mediapipe, or 2D predictions overlaid videos?
     useraw = False
+    usemediapipe = False
 
     for trial in trialfolders:
 
@@ -40,6 +41,8 @@ def main():
         # Obtain raw videos
         if useraw is True:
             vidlist = sorted(glob.glob(rawvideos + trialname + '/*.avi'))
+        elif usemediapipe is True:
+            vidlist = sorted(glob.glob(processedvideos + trialname + '/*_mediapipe.mp4'))
         else:
             vidlist = sorted(glob.glob(processedvideos + trialname + '/*_refined.mp4'))
         ncams = len(vidlist)
