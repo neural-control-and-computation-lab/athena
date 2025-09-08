@@ -567,8 +567,8 @@ def visualize_3d(p3ds, save_path=None):
 
     # Determine range of visualization (based on mid 50th percentile of the hands)
     percentile = 50 / 2
-    datalow = np.min(np.nanpercentile(p3ds[:, 33:74, :], percentile, axis=0), axis=0)
-    datahigh = np.max(np.nanpercentile(p3ds[:, 33:74, :], 100 - percentile, axis=0), axis=0)
+    datalow = np.nanmin(np.nanpercentile(p3ds[:, 33:74, :], percentile, axis=0), axis=0)
+    datahigh = np.nanmax(np.nanpercentile(p3ds[:, 33:74, :], 100 - percentile, axis=0), axis=0)
     dataint = datahigh - datalow
     datamid = (dataint / 2) + datalow
     largestint = np.max(dataint)
