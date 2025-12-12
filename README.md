@@ -116,6 +116,7 @@ main_folder/
 ├── videos_processed/      # Contains processed videos with landmarks overlaid
 └── ...                    # Original videos and calibration files
 ```
+The 3D landmarks are saved as a numpy file shaped as the following 3D array: nframes x 75 (nlandmarks) x 3 (X, Y, Z); where nframes are the number of frames in the recording. The 75 landmarks correspond, in order, with 33 body landmarks (see MediaPipe Pose Landmarker model for order of landmarks), 21 right hand landmarks, and 21 left hand landmarks (see Mediapipe Hand Landmarker for order of landmarks). For example, the right and left wrist will correspond to slices 33 and 54 along the second dimension, respectively.
 
 To create a single video that contains all videos (2D and 3D), you can use the 'montage' script and select the recording folder using the popup window:
 ```console
