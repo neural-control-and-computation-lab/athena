@@ -442,6 +442,8 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
         stream.thread_type = 'AUTO'
 
         colors = [
+            '#EEDE33', '#EEDE33', '#EEDE33', '#EEDE33',
+            '#EEDE33', '#EEDE33', '#EEDE33', '#EEDE33',
             '#DDDDDD', '#DDDDDD', '#DDDDDD', '#DDDDDD',
             '#009988', '#009988',
             '#EE7733', '#EE7733',
@@ -458,6 +460,8 @@ def process_camera(cam, input_stream, data, display_width, display_height, outdi
         ]
 
         links = [
+            [0, 1], [1, 2], [2, 3], [3, 7],
+            [0, 4], [4, 5], [5, 6], [6, 8],
             [11, 12], [11, 23], [12, 24], [23, 24],
             [11, 13], [13, 54],
             [12, 14], [14, 33],
@@ -534,6 +538,8 @@ def visualize_3d(p3ds, save_path=None):
     """
 
     colours = [
+        '#EEDE33', '#EEDE33', '#EEDE33', '#EEDE33',
+        '#EEDE33', '#EEDE33', '#EEDE33', '#EEDE33',
         '#DDDDDD', '#DDDDDD', '#DDDDDD', '#DDDDDD',
         '#009988', '#009988',
         '#EE7733', '#EE7733',
@@ -550,6 +556,8 @@ def visualize_3d(p3ds, save_path=None):
     ]
 
     links = [
+        [0, 1], [1, 2], [2, 3], [3, 7],
+        [0, 4], [4, 5], [5, 6], [6, 8],
         [11, 12], [11, 23], [12, 24], [23, 24],
         [11, 13], [13, 54],
         [12, 14], [14, 33],
