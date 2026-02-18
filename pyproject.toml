@@ -27,9 +27,23 @@ dependencies = [
     "matplotlib",
     "tqdm",
     "scipy",
-    "pymovie",
     "toml",
-    "moviepy"
+    "moviepy",
+    "opencv-python",
+]
+
+[project.optional-dependencies]
+hamer = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "gdown",
+    "smplx==0.1.28",
+    "yacs",
+    "timm",
+    "einops",
+    "pytorch-lightning",
+    "chumpy",
+    "webdataset",
 ]
 
 [tool.setuptools.dynamic]
@@ -46,4 +60,16 @@ packages = ["athena"]
 "GitHub" = "https://github.com/neural-control-and-computation-lab/athena"
 
 [tool.setuptools.package-data]
-"athena" = ["labels2d.py", "triangulaterefine.py", "athena.py", "montage.py", "models/hand_landmarker.task", "models/pose_landmarker_full.task", "logo.png"]
+"athena" = [
+    "labels2d.py",
+    "triangulaterefine.py",
+    "visualization.py",
+    "athena.py",
+    "montage.py",
+    "hamer_hands.py",
+    "models/hand_landmarker.task",
+    "models/pose_landmarker_full.task",
+    "models/face_landmarker.task",
+    "models/blaze_face_short_range.tflite",
+    "logo.png",
+]

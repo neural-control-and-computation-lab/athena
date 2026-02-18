@@ -1,7 +1,25 @@
-__pycache__
-.idea
+__pycache__/
+*.pyc
+.idea/
 .DS_Store
-build/*
-athena.egg*
-athena_tracking.egg*
-dist/*
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Large model/data files
+_DATA/
+*.tflite
+*.task
+*.ckpt
+*.pth
+*.pt
+*.tar.gz
+
+# Environment
+.env
+.venv/
+
+# IDE
+.vscode/
+*.swp

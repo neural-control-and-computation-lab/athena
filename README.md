@@ -1,7 +1,8 @@
 # ATHENA Toolbox
-ATHENA (Automatically Tracking Hands Expertly with No Annotations) is a Python-based toolbox designed to process multi-camera video recordings, extract 2D and 3D body and hand landmarks using MediaPipe, and perform triangulation and refinement of these landmarks. The toolbox provides a user-friendly GUI for selecting videos and configuring processing options.
 
-Check out our [paper](https://doi.org/10.1152/jn.00407.2025) published in the Journal of Neurophysiology for more information.
+**ATHENA** (Automatically Tracking Hands Expertly with No Annotations) is a Python toolbox for markerless 3D hand, body, and face tracking from synchronized multi-camera video. It implements a two-phase pipeline: (1) per-camera 2D landmark detection using MediaPipe (with an optional HaMeR hand-mesh backend), followed by (2) multi-camera DLT triangulation, temporal smoothing, and cross-camera hand-swap correction to produce refined 3D landmarks. The toolbox ships with a Tkinter GUI for configuring and launching all processing steps.
+
+Check out our [paper](https://doi.org/10.1152/jn.00407.2025) published in the *Journal of Neurophysiology* for more information.
 
 <table>
   <tr>
@@ -11,46 +12,68 @@ Check out our [paper](https://doi.org/10.1152/jn.00407.2025) published in the Jo
 </table>
 
 ## Features
-- Multi-Camera Processing: Handles multiple camera inputs for comprehensive analysis.
-- MediaPipe Integration: Utilizes Google’s MediaPipe for extracting 2D landmarks of the body and hands.
-- 3D Triangulation: Triangulates 2D landmarks from multiple cameras to reconstruct 3D landmarks.
-- Smoothing and Refinement: Applies smoothing algorithms to refine the 3D landmarks.
-- Parallel Processing: Supports multiprocessing to speed up the processing of large datasets.
-- GUI for Easy Configuration: Provides a graphical user interface to select folders, recordings, and set processing options.
-- Visualization: Offers options to save images and videos of the processed landmarks for visualization.
+
+- **Multi-camera processing** -- handles an arbitrary number of synchronized camera inputs.
+- **MediaPipe integration** -- body pose (33 landmarks), hand (21 landmarks per hand), and face mesh (478 landmarks) detection via Google MediaPipe.
+- **HaMeR hand-mesh regression** (optional) -- high-quality MANO mesh recovery (778 vertices per hand) as an alternative to MediaPipe hands, using MediaPipe bounding boxes fed into [HaMeR](https://github.com/geopavlakos/hamer).
+- **Cross-camera hand reassignment** -- after independent per-camera detection, body wrists are triangulated to 3D and reprojected into every camera to reassign hand labels, fixing left/right misassignments.
+- **Spatially inconsistent hand rejection** -- hand detections whose wrist root deviates more than a threshold (default 60 px) from the reprojected 3D body wrist are rejected, preventing noisy detections from corrupting triangulation.
+- **Face mesh tracking** -- optional 478-landmark face mesh via MediaPipe FaceLandmarker, triangulated and smoothed alongside body and hand data.
+- **DLT triangulation with outlier filtering** -- iterative reprojection-error camera filtering (30 px threshold) removes outlier cameras per landmark per frame.
+- **Temporal smoothing** -- Savitzky-Golay low-pass filter with configurable frequency cutoff.
+- **Parallel processing** -- multiprocessing across cameras for the 2D detection phase.
+- **GUI for easy configuration** -- Tkinter interface for folder selection, backend choice, confidence thresholds, and visualization options.
+- **Visualization** -- colour-coded skeleton overlays, Lambertian-shaded hand mesh rendering, 3D skeleton plots, and montage video generation.
 
 ## Installation
+
 ### Prerequisites
-- Operating System: Windows, macOS, or Linux.
-- Python Version: Python 3.12
-- Hardware Requirements:
-- CPU: Multi-core processor recommended for parallel processing.
-- GPU (Optional): NVIDIA GPU for accelerated processing (if GPU processing is enabled).
 
-### Installation Steps
+- **OS**: Windows, macOS, or Linux
+- **Python**: 3.12
+- **Hardware**: Multi-core CPU recommended. GPU optional (NVIDIA for CUDA, or Apple Silicon via MPS for HaMeR).
 
-Use your package manager of choice to create an environment with Python 3.12. For example, using conda:
+### Install
+
+Create and activate an environment with Python 3.12:
+
 ```console
 conda create -n athena python=3.12
-```
-Activate the environment:
-```console
 conda activate athena
 ```
-Then install the package:
+
+Install from PyPI:
+
 ```console
 pip install athena-tracking
 ```
 
-Or to get the latest version directly from GitHub:
+Or install the latest development version from GitHub:
+
 ```console
 pip install git+https://github.com/neural-control-and-computation-lab/athena.git
 ```
 
-## Usage
-### 1.	Organize Your Videos
-Place your synchronized video recordings in a main folder, structured as follows:
+### Optional: HaMeR hand-mesh backend
+
+HaMeR requires PyTorch and several additional packages. Install them after the base package:
+
 ```console
+pip install athena-tracking[hamer]
+pip install --no-deps git+https://github.com/geopavlakos/hamer.git
+```
+
+The first command installs PyTorch and all HaMeR sub-dependencies. The second installs HaMeR itself from source (the `--no-deps` flag is needed because HaMeR's own dependency list includes rendering packages that are not required for ATHENA's keypoint-only usage).
+
+On first run with HaMeR enabled, model checkpoints will be downloaded automatically into `_DATA/`.
+
+## Usage
+
+### 1. Organize Your Videos
+
+Place synchronized video recordings in a main folder with this structure:
+
+```
 main_folder/
 ├── videos/
 │   ├── recording1/
@@ -62,93 +85,238 @@ main_folder/
 │   │   ├── cam1.avi
 │   │   └── ...
 └── calibration/
-    ├── cam0.yaml
+    ├── cam0.yaml      # or a single .toml file (Anipose format)
     ├── cam1.yaml
     └── ...
 ```
 
-- Each recording folder should contain video files from multiple cameras (e.g., cam0.avi, cam1.avi).
-- The calibration folder should contain calibration files (.yaml) for each camera.
+- Each recording folder contains one video per camera (`.avi` or `.mp4`).
+- The `calibration/` folder contains per-camera intrinsic and extrinsic parameters in YAML (JARVIS format) or a single TOML file (Anipose format).
 
-For recording and calibrating your cameras, we highly recommend the [JARVIS Toolbox](https://jarvis-mocap.github.io/jarvis-docs/).
+For recording and calibrating cameras, we recommend the [JARVIS Toolbox](https://jarvis-mocap.github.io/jarvis-docs/).
 
-### 2.	Ensure Calibration Files are Correct
-- Calibration files should be labelled with camera names that match recorded videos.
-- Calibration files should contain intrinsic and extrinsic parameters for each camera.
-- The calibration files are essential for accurate triangulation of 3D landmarks.
+### 2. Ensure Calibration Files are Correct
 
-### 3. Running the Toolbox
-Launch the GUI:
+- Camera names in calibration files must match the video filenames.
+- Files must contain intrinsic matrices, distortion coefficients, and extrinsic parameters (rotation + translation).
+- ATHENA accepts calibration files from JARVIS or Anipose without modification.
+
+### 3. Launch the GUI
+
 ```console
 athena
 ```
 
-1. Select Main Folder and Recordings 
-   - Click on the “Select Folder” button to choose your main folder containing the videos and calibration directories.
-   - A new window will appear, allowing you to select specific recordings to process. Select the desired recordings and click “Select”.
-2. Configure Processing Options
-   - General Settings:
-     - Fraction of Frames to Process: Slide to select the fraction of frames you want to process (from 0 to 1). Default is 1.0 (process all frames).
-     - Number of Parallel Processes: Choose the number of processes for parallel processing. Default is the number of available CPU cores.
-     - GPU Processing: Check this option to enable GPU acceleration (requires compatible NVIDIA GPU).
-   - MediaPipe Processing:
-     - Run Mediapipe: Check this option to run MediaPipe for extracting 2D landmarks.
-     - Save Images: Save images with landmarks drawn (can consume significant storage).
-     - Save Video: Save videos with landmarks overlaid (requires “Save Images” to be enabled).
-     - Minimum Hand Detection & Tracking Confidence: Adjust the confidence threshold for hand detection (default is 0.9).
-     - Minimum Pose Detection & Tracking Confidence: Adjust the confidence threshold for pose detection (default is 0.9).
-   - Run Triangulation and Refinement:
-     - Run Triangulation and Refinement: Check this option to perform 3D triangulation of landmarks and filtering.
-     - All points: low-freq cutoff (Hz): Set the low-frequency cutoff for smoothing of all points (default is 10 Hz).
-     - Save 3D Images: Save images of the 3D landmarks.
-     - Save 3D Video: Save videos of the 3D landmarks.
-     - Save Refined 2D Images: Save images of the refined 2D landmarks after triangulation.
-     - Save Refined 2D Video: Save videos of the refined 2D landmarks
-3. Start Processing
-   - Click the “GO” button to start processing.
-   - A progress window will appear, showing the processing progress and average FPS.
+1. **Select Main Folder and Recordings** -- click "Select Folder", then choose recordings from the popup list.
+2. **Configure Processing Options**:
+   - *General*: fraction of frames to process, number of parallel processes, GPU toggle.
+   - *2D Extraction*: enable/disable, hand and pose confidence thresholds, save images/video.
+   - *Hand Backend*: MediaPipe (default) or HaMeR.
+   - *Face Mesh*: optionally include 478 face landmarks.
+   - *Triangulation & Refinement*: enable/disable, low-frequency smoothing cutoff (Hz), save 3D and refined 2D images/video.
+3. **Start Processing** -- click "GO". A progress bar displays per-camera progress and average FPS.
 
-### 4. Output Folder Structure
-After processing, the toolbox will create additional directories within your main folder:
+### 4. Create a Montage Video
+
+Combine all camera views (2D and 3D) into a single montage:
+
 ```console
-main_folder/
-├── images/                # Contains images with landmarks drawn
-├── imagesrefined/         # Contains refined images after triangulation
-├── landmarks/             # Contains 2D and 3D landmark data
-├── videos_processed/      # Contains processed videos with landmarks overlaid
-└── ...                    # Original videos and calibration files
+athena-montage
 ```
-The 3D landmarks are saved as a numpy file shaped as the following 3D array: nframes x 75 (nlandmarks) x 3 (X, Y, Z); where nframes are the number of frames in the recording. The 75 landmarks correspond, in order, with 33 body landmarks (see MediaPipe Pose Landmarker model for order of landmarks), 21 right hand landmarks, and 21 left hand landmarks (see Mediapipe Hand Landmarker for order of landmarks). For example, the right and left wrist will correspond to slices 33 and 54 along the second dimension, respectively.
 
-To create a single video that contains all videos (2D and 3D), you can use the 'montage' script and select the recording folder using the popup window:
+Or equivalently:
+
 ```console
 python -m athena.montage
 ```
 
-### Troubleshooting
-- MediaPipe Errors: Ensure that MediaPipe is correctly installed and compatible with your Python version. MediaPipe may have specific requirements, especially for GPU support.
-- Calibration Mismatch: Verify that the number of calibration files matches the number of camera videos.
-- High Memory Usage: Processing large videos or saving images and videos can consume significant memory and storage.
-- Permission Issues: Ensure that you have read/write permissions for the directories where data is stored and processed.
-- Conda Environment Activation: Always make sure that the Conda environment is activated before running the scripts.
+## Architecture
 
-### Contributing
-Contributions are welcome! If you encounter issues or have suggestions for improvements, please create an issue or submit a pull request on GitHub.
+### Pipeline Overview
 
-### Frequently Asked Questions (FAQ)
+```
+Phase 1: 2D Detection (labels2d)
+  Per camera (parallel):
+    Video frames --> MediaPipe Pose (33 body landmarks)
+                 --> MediaPipe Hands or HaMeR (21 landmarks per hand, optional 778 mesh vertices)
+                 --> MediaPipe FaceLandmarker (optional, 478 face landmarks)
+  Cross-camera:
+    Triangulate body wrists --> reproject --> reassign/reject hands
 
-Q: Do I need a GPU to run the ATHENA Toolbox?\
-A: No, a GPU is not required and does not generally speed up processing, which is already highly parallelized. If you have a compatible NVIDIA GPU, you can enable GPU processing in the options. Ensure that your GPU drivers and CUDA toolkit are correctly installed.
+Phase 2: Triangulation & Refinement (triangulaterefine)
+    Load per-camera 2D landmarks
+    --> Correct left/right hand swaps across cameras
+    --> Undistort 2D points
+    --> DLT triangulation with reprojection-error camera filtering
+    --> Savitzky-Golay temporal smoothing
+    --> Reproject smoothed 3D back to each camera
+    --> (Optional) Triangulate HaMeR mesh vertices
+    --> Generate visualization images/videos
+```
 
-Q: Can I process videos from only one camera?\
-A: Yes, you can process videos from a single camera to extract 2D landmarks. However, triangulation to 3D landmarks requires synchronized videos from at least two cameras and their corresponding calibration files.
+### Modules
 
-Q: How do I obtain the calibration files?\
-A: Calibration files are generated using camera calibration techniques, often involving capturing images of a known pattern (like a chessboard) from different angles. You can use OpenCV’s calibration tools or other software to create these .yaml files.
-ATHENA accepts calibration files created by JARVIS or Anipose without any modification.
+| Module | Description |
+|---|---|
+| `athena.athena` | Tkinter GUI launcher and entry point (`athena` CLI command). |
+| `athena.labels2d` | Phase 1 -- per-camera 2D landmark detection, cross-camera hand reassignment, and video I/O. Contains both the pure-MediaPipe and the hybrid (MediaPipe + HaMeR) processing paths. |
+| `athena.triangulaterefine` | Phase 2 -- DLT triangulation, Savitzky-Golay smoothing, hand-swap correction, HaMeR vertex triangulation, and 2D/3D visualization rendering. |
+| `athena.visualization` | Shared skeleton topology (`SKELETON_LINKS`), colour palettes, `draw_landmarks_unified()` for skeleton overlays, and `render_mesh_overlay()` for Lambertian-shaded mesh rendering. |
+| `athena.hamer_hands` | Optional HaMeR hand-mesh regression backend. Lazily imports PyTorch/HaMeR. Supports CUDA, MPS, and CPU. Provides `load_models()`, `detect_hands_mp_landmarks()`, `get_mano_faces()`, and `is_available()`. |
+| `athena.montage` | Multi-camera video montage creation (`athena-montage` CLI command). |
 
-Q: The processing is slow. How can I speed it up?\
-A: You can increase the number of parallel processes if your CPU has more cores. Enabling GPU processing can also significantly speed up the landmark detection step. Additionally, processing a smaller fraction of frames can reduce computation time.
+## Output
 
-Q: Where can I find the output data after processing?\
-A: Processed data, images, and videos are saved in the images/, imagesrefined/, landmarks/, and videos_processed/ directories within your main folder.
+### Folder Structure
+
+After processing, ATHENA creates the following directories:
+
+```
+main_folder/
+├── images/                  # 2D landmark overlay images (per camera)
+├── imagesrefined/           # Reprojected refined 2D overlays + 3D skeleton plots
+├── landmarks/
+│   └── <recording>/
+│       ├── cam0/
+│       │   ├── 2Dlandmarks_body.npy
+│       │   ├── 2Dlandmarks_right.npy
+│       │   ├── 2Dlandmarks_left.npy
+│       │   ├── 2Dlandmarks_face.npy          # if face mesh enabled
+│       │   ├── hamer_vertices_2d_left.npy    # if HaMeR enabled
+│       │   ├── hamer_vertices_2d_right.npy   # if HaMeR enabled
+│       │   └── ...
+│       ├── cam1/
+│       │   └── ...
+│       ├── hamer_faces.npy                    # MANO triangle indices (if HaMeR)
+│       ├── <recording>_3Dlandmarks.npy        # final 3D landmarks
+│       └── <recording>_2Dlandmarksrefined.npy # reprojected 2D landmarks
+├── videos_processed/        # Processed videos with landmark overlays
+└── ...
+```
+
+### 3D Landmark File Format
+
+The primary output is `<recording>_3Dlandmarks.npy`, a NumPy array:
+
+- **Shape**: `(nframes, nlandmarks, 3)` where each row is `[X, Y, Z]` in the calibration coordinate system.
+- **Without face mesh**: `nlandmarks = 75`
+- **With face mesh**: `nlandmarks = 75 + 478 = 553`
+
+**Landmark ordering (indices along axis 1):**
+
+| Index range | Count | Source |
+|---|---|---|
+| 0 -- 32 | 33 | Body (MediaPipe Pose Landmarker) |
+| 33 -- 53 | 21 | Right hand (MediaPipe / HaMeR keypoints) |
+| 54 -- 74 | 21 | Left hand (MediaPipe / HaMeR keypoints) |
+| 75 -- 552 | 478 | Face (MediaPipe FaceLandmarker, if enabled) |
+
+Notable indices: right wrist = 33, left wrist = 54.
+
+See the [MediaPipe Pose Landmarker](https://developers.google.com/mediapipe/solutions/vision/pose_landmarker) and [MediaPipe Hand Landmarker](https://developers.google.com/mediapipe/solutions/vision/hand_landmarker) documentation for the detailed ordering within each group.
+
+### HaMeR Mesh Vertices
+
+When HaMeR is used, per-camera 2D mesh vertices are saved as `hamer_vertices_2d_{left,right}.npy` with shape `(nframes, 778, 2)`. Triangle indices are saved once per recording as `hamer_faces.npy` with shape `(F, 3)` using the MANO topology. These vertices are triangulated to 3D during Phase 2 and used for shaded mesh visualization.
+
+### Refined 2D Landmarks
+
+`<recording>_2Dlandmarksrefined.npy` has shape `(ncams, nframes, nlandmarks, 2)` and contains the 3D landmarks reprojected back into each camera's pixel space after smoothing.
+
+## API Reference
+
+### `athena.labels2d`
+
+| Function | Description |
+|---|---|
+| `main(gui_options_json)` | Entry point for Phase 1. Parses GUI options, dispatches to MediaPipe or hybrid processing, runs cross-camera hand reassignment. |
+| `run_mediapipe(...)` | Pure MediaPipe processing path (body + hands, optional face). |
+| `run_hybrid(...)` | Hybrid processing path (MediaPipe body/bounding boxes + HaMeR hands). |
+| `process_camera(...)` | Per-camera MediaPipe detection loop. |
+| `process_camera_hybrid(...)` | Per-camera hybrid (MediaPipe + HaMeR) detection loop. |
+| `read_calibration(calibration_files, extension)` | Load camera calibration from YAML or TOML files. Returns intrinsic matrices, extrinsic matrices, and distortion coefficients. |
+| `create_video(image_folder, extension, fps, output_folder, video_name)` | Compile a folder of images into a video file. |
+
+### `athena.triangulaterefine`
+
+| Function | Description |
+|---|---|
+| `main(gui_options_json)` | Entry point for Phase 2. Triangulates, smooths, reprojects, and renders all trials. |
+
+### `athena.visualization`
+
+| Function / Constant | Description |
+|---|---|
+| `draw_landmarks_unified(...)` | Draw skeleton (and optionally shaded hand meshes) on a BGR image. |
+| `render_mesh_overlay(...)` | Render a filled, depth-sorted, Lambertian-shaded mesh overlay. |
+| `hex_to_bgr(hexcode)` | Convert hex colour string to BGR tuple. |
+| `SKELETON_LINKS` | List of `[i, j]` index pairs defining the full skeleton topology (body + hands). |
+| `BODY_LINKS` | Subset of `SKELETON_LINKS` for body-only rendering. |
+
+### `athena.hamer_hands`
+
+| Function | Description |
+|---|---|
+| `is_available()` | Check whether HaMeR and PyTorch are importable. |
+| `load_models(device, use_gpu)` | Initialize HaMeR model (cached after first call). Returns `(model, cfg, device)`. |
+| `get_mano_faces()` | Return MANO mesh triangle indices as `(F, 3)` array. |
+| `detect_hands_mp_landmarks(...)` | Run HaMeR on a cropped hand image and return 21 keypoints + 778 mesh vertices. |
+
+### `athena.montage`
+
+| Function | Description |
+|---|---|
+| `main()` | GUI for selecting a recording folder and generating a multi-camera montage video. |
+
+## Troubleshooting
+
+- **MediaPipe errors**: Ensure MediaPipe is compatible with Python 3.12. GPU delegate support varies by platform.
+- **HaMeR import errors**: Verify that `torch`, `torchvision`, and `hamer` are installed. Run `python -c "from athena.hamer_hands import is_available; print(is_available())"` to test.
+- **Calibration mismatch**: The number of calibration entries must match the number of camera videos per recording.
+- **High memory usage**: Saving images and videos consumes significant storage. Process a subset of frames first (fraction slider) to estimate disk requirements.
+- **Permission issues**: Ensure read/write permissions for all data directories.
+- **macOS tkinter**: On macOS, install `python-tk` via Homebrew or use the conda-forge Python build which includes Tk bindings.
+
+## Contributing
+
+Contributions are welcome. Please open an issue or submit a pull request on [GitHub](https://github.com/neural-control-and-computation-lab/athena).
+
+## Citation
+
+If you use ATHENA in your research, please cite:
+
+> Mulla D, Michaels JA. ATHENA: Automatically Tracking Hands Expertly with No Annotations. *Journal of Neurophysiology*. 2025. doi: [10.1152/jn.00407.2025](https://doi.org/10.1152/jn.00407.2025)
+
+```bibtex
+@article{mulla2025athena,
+  title     = {{ATHENA}: Automatically Tracking Hands Expertly with No Annotations},
+  author    = {Mulla, Daanish and Michaels, Jonathan A.},
+  journal   = {Journal of Neurophysiology},
+  year      = {2025},
+  doi       = {10.1152/jn.00407.2025},
+}
+```
+
+## FAQ
+
+**Q: Do I need a GPU?**
+A: No. The 2D detection phase is already parallelized across CPU cores. A GPU can accelerate MediaPipe detection slightly, and is more beneficial for HaMeR inference. CUDA (NVIDIA) and MPS (Apple Silicon) are supported.
+
+**Q: Can I process single-camera video?**
+A: Yes, for 2D landmark extraction only. Triangulation to 3D requires synchronized video from at least two cameras with calibration.
+
+**Q: How do I obtain calibration files?**
+A: Use a camera calibration tool such as [JARVIS](https://jarvis-mocap.github.io/jarvis-docs/) or [Anipose](https://anipose.readthedocs.io/). ATHENA accepts YAML (JARVIS) and TOML (Anipose) formats directly.
+
+**Q: Processing is slow -- how can I speed it up?**
+A: Increase the number of parallel processes (up to the number of cameras). Use the fraction-of-frames slider to subsample. HaMeR is slower than MediaPipe hands but produces higher-quality meshes.
+
+**Q: What is the difference between MediaPipe and HaMeR hand backends?**
+A: MediaPipe provides 21 hand keypoints per hand. HaMeR additionally recovers a dense MANO hand mesh (778 vertices per hand), which can be triangulated to 3D and rendered as a shaded overlay. HaMeR requires PyTorch.
+
+**Q: Where is the output data?**
+A: 3D landmarks are in `landmarks/<recording>/<recording>_3Dlandmarks.npy`. Refined 2D reprojections are in `landmarks/<recording>/<recording>_2Dlandmarksrefined.npy`. Images and videos are in `images/`, `imagesrefined/`, and `videos_processed/`.
+
+## License
+
+MIT License. See [pyproject.toml](pyproject.toml) for details.

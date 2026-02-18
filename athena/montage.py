@@ -42,7 +42,10 @@ def main():
         if useraw is True:
             vidlist = sorted(glob.glob(rawvideos + trialname + '/*.avi'))
         elif usemediapipe is True:
+            # Support both mediapipe and hamer video naming
             vidlist = sorted(glob.glob(processedvideos + trialname + '/*_mediapipe.mp4'))
+            if not vidlist:
+                vidlist = sorted(glob.glob(processedvideos + trialname + '/*_hamer.mp4'))
         else:
             vidlist = sorted(glob.glob(processedvideos + trialname + '/*_refined.mp4'))
         ncams = len(vidlist)

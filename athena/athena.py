@@ -141,17 +141,41 @@ def select_folder_and_options(root):
         gui_options['save_images_refine'] = var_save_images_refine.get()
         gui_options['save_video_refine'] = var_save_video_refine.get()
         gui_options['all_landmarks_lfc'] = slider_all_lfc.get()
+        gui_options['hand_backend'] = var_hand_backend.get()
+        gui_options['use_face_mesh'] = var_use_face_mesh.get()
 
         if not gui_options['idfolders']:
             messagebox.showerror("Error", "No recordings selected!")
             return  # Prevent further execution if no folders are selected
+
+        # Validate HaMeR availability if selected
+        if gui_options['hand_backend'] == 'hamer':
+            try:
+                from athena.hamer_hands import is_available
+                if not is_available():
+                    messagebox.showerror(
+                        "HaMeR Not Available",
+                        "HaMeR and its dependencies (PyTorch) are not installed.\n\n"
+                        "Install with:\n"
+                        "  pip install athena-tracking[hamer]\n"
+                        "  pip install --no-deps git+https://github.com/geopavlakos/hamer.git\n\n"
+                        "Falling back to MediaPipe."
+                    )
+                    gui_options['hand_backend'] = 'mediapipe'
+            except ImportError:
+                messagebox.showerror(
+                    "HaMeR Not Available",
+                    "HaMeR module not found. Falling back to MediaPipe."
+                )
+                gui_options['hand_backend'] = 'mediapipe'
 
         gui_options_json = json.dumps(gui_options)
 
         # Execute the processing scripts based on user selections
         try:
             if gui_options['run_mediapipe']:
-                print('Running Mediapipe.')
+                backend_name = 'HaMeR + MediaPipe' if gui_options['hand_backend'] == 'hamer' else 'MediaPipe'
+                print(f'Running 2D extraction ({backend_name}).')
                 # Import the module and call its main function
                 from athena.labels2d import main as labels2d_main
                 labels2d_main(gui_options_json)
@@ -230,7 +254,7 @@ def select_folder_and_options(root):
     gui_options = {}  # Dictionary to hold GUI options
 
     # Set window size and center it on the screen
-    window_width, window_height = 600, 700
+    window_width, window_height = 600, 800
     screen_width, screen_height = root.winfo_screenwidth(), root.winfo_screenheight()
     position_x, position_y = (screen_width - window_width) // 2, (screen_height - window_height) // 2
     root.geometry(f'{window_width}x{window_height}+{position_x}+{position_y}')
@@ -245,6 +269,8 @@ def select_folder_and_options(root):
     var_save_video_triangulation = tk.BooleanVar(value=False)
     var_save_images_refine = tk.BooleanVar(value=False)
     var_save_video_refine = tk.BooleanVar(value=False)
+    var_hand_backend = tk.StringVar(value='mediapipe')   # 'mediapipe' or 'hamer'
+    var_use_face_mesh = tk.BooleanVar(value=False)
 
     # Trace changes to 'Save Video' and 'Save Images' variables
     var_save_video_mp.trace_add('write', update_save_images_mp)
@@ -266,13 +292,13 @@ def select_folder_and_options(root):
     folder_label = tk.Label(frame_general, text="Folder: Not selected", anchor='w', wraplength=450)
     folder_label.grid(row=0, column=1, padx=10, pady=5, sticky="w")
 
-    # Run Mediapipe frame
-    frame_mediapipe = tk.LabelFrame(root, text="Run Mediapipe", padx=10, pady=10)
+    # 2D Extraction frame
+    frame_mediapipe = tk.LabelFrame(root, text="2D Extraction", padx=10, pady=10)
     frame_mediapipe.pack(fill="x", padx=10, pady=5)
 
-    # Checkbox to run Mediapipe
+    # Checkbox to run 2D extraction
     chk_run_mediapipe = tk.Checkbutton(
-        frame_mediapipe, text="Run Mediapipe", font=("Arial", 15, "bold"),
+        frame_mediapipe, text="Run 2D Extraction", font=("Arial", 15, "bold"),
         variable=var_run_mediapipe
     )
     chk_run_mediapipe.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="w")
@@ -323,6 +349,32 @@ def select_folder_and_options(root):
     chk_save_images_mp.grid(row=4, column=0, padx=5, pady=5, sticky="w")
     chk_save_video_mp = tk.Checkbutton(frame_mediapipe, text="Save Video", variable=var_save_video_mp)
     chk_save_video_mp.grid(row=4, column=1, padx=5, pady=5, sticky="w")
+
+    # Hand detection backend selection
+    lbl_hand_backend = tk.Label(
+        frame_mediapipe, text="Hand Detection Backend:",
+        font=("Arial", 10, "bold")
+    )
+    lbl_hand_backend.grid(row=5, column=0, columnspan=2, padx=10, pady=(10, 0), sticky="w")
+
+    radio_mp_hands = tk.Radiobutton(
+        frame_mediapipe, text="MediaPipe Hands",
+        variable=var_hand_backend, value='mediapipe'
+    )
+    radio_mp_hands.grid(row=6, column=0, padx=10, pady=2, sticky="w")
+
+    radio_hamer_hands = tk.Radiobutton(
+        frame_mediapipe, text="HaMeR Hands (requires PyTorch)",
+        variable=var_hand_backend, value='hamer'
+    )
+    radio_hamer_hands.grid(row=6, column=1, padx=10, pady=2, sticky="w")
+
+    # Face mesh option
+    chk_face_mesh = tk.Checkbutton(
+        frame_mediapipe, text="Include Face Mesh (478 landmarks)",
+        variable=var_use_face_mesh
+    )
+    chk_face_mesh.grid(row=7, column=0, columnspan=2, padx=10, pady=5, sticky="w")
 
     # Triangulation and Refinement frame
     frame_triangulation = tk.LabelFrame(root, text="Triangulation and Refinement", padx=10, pady=10)
