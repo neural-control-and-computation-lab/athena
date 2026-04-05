@@ -19,6 +19,7 @@ Check out our [paper](https://doi.org/10.1152/jn.00407.2025) published in the *J
 - **Cross-camera hand reassignment** -- after independent per-camera detection, body wrists are triangulated to 3D and reprojected into every camera to reassign hand labels, fixing left/right misassignments.
 - **Spatially inconsistent hand rejection** -- hand detections whose wrist root deviates more than a threshold (default 60 px) from the reprojected 3D body wrist are rejected, preventing noisy detections from corrupting triangulation.
 - **Face mesh tracking** -- optional 478-landmark face mesh via MediaPipe FaceLandmarker, triangulated and smoothed alongside body and hand data.
+- **Dynamic calibration refinement** -- optional sliding-window bundle adjustment refines camera extrinsics using reprojection error from confident hand landmark detections. Uses a robust (soft L1) loss to resist outlier detections while tracking genuine camera movement. Includes drift detection to flag cameras that may have physically shifted during a recording.
 - **DLT triangulation with outlier filtering** -- iterative reprojection-error camera filtering (30 px threshold) removes outlier cameras per landmark per frame.
 - **Temporal smoothing** -- Savitzky-Golay low-pass filter with configurable frequency cutoff.
 - **Parallel processing** -- multiprocessing across cameras for the 2D detection phase.
@@ -87,7 +88,9 @@ main_folder/
 └── calibration/
     ├── cam0.yaml      # or a single .toml file (Anipose format)
     ├── cam1.yaml
-    └── ...
+    ├── ...
+    └── refined/       # created by calibration refinement (if enabled)
+        └── calibration_refined.toml  # or .yaml
 ```
 
 - Each recording folder contains one video per camera (`.avi` or `.mp4`).
@@ -113,7 +116,7 @@ athena
    - *2D Extraction*: enable/disable, hand and pose confidence thresholds, save images/video.
    - *Hand Backend*: MediaPipe (default) or HaMeR.
    - *Face Mesh*: optionally include 478 face landmarks.
-   - *Triangulation & Refinement*: enable/disable, low-frequency smoothing cutoff (Hz), save 3D and refined 2D images/video.
+   - *Triangulation & Refinement*: enable/disable, calibration refinement toggle, low-frequency smoothing cutoff (Hz), save 3D and refined 2D images/video.
 3. **Start Processing** -- click "GO". A progress bar displays per-camera progress and average FPS.
 
 ### 4. Create a Montage Video
@@ -145,6 +148,7 @@ Phase 1: 2D Detection (labels2d)
 
 Phase 2: Triangulation & Refinement (triangulaterefine)
     Load per-camera 2D landmarks
+    --> (Optional) Refine camera extrinsics via bundle adjustment
     --> Correct left/right hand swaps across cameras
     --> Undistort 2D points
     --> DLT triangulation with reprojection-error camera filtering
@@ -161,6 +165,7 @@ Phase 2: Triangulation & Refinement (triangulaterefine)
 | `athena.athena` | Tkinter GUI launcher and entry point (`athena` CLI command). |
 | `athena.labels2d` | Phase 1 -- per-camera 2D landmark detection, cross-camera hand reassignment, and video I/O. Contains both the pure-MediaPipe and the hybrid (MediaPipe + HaMeR) processing paths. |
 | `athena.triangulaterefine` | Phase 2 -- DLT triangulation, Savitzky-Golay smoothing, hand-swap correction, HaMeR vertex triangulation, and 2D/3D visualization rendering. |
+| `athena.calibration_refine` | Optional camera calibration refinement via sliding-window bundle adjustment with robust loss and drift detection. |
 | `athena.visualization` | Shared skeleton topology (`SKELETON_LINKS`), colour palettes, `draw_landmarks_unified()` for skeleton overlays, and `render_mesh_overlay()` for Lambertian-shaded mesh rendering. |
 | `athena.hamer_hands` | Optional HaMeR hand-mesh regression backend. Lazily imports PyTorch/HaMeR. Supports CUDA, MPS, and CPU. Provides `load_models()`, `detect_hands_mp_landmarks()`, `get_mano_faces()`, and `is_available()`. |
 | `athena.montage` | Multi-camera video montage creation (`athena-montage` CLI command). |
@@ -243,6 +248,13 @@ When HaMeR is used, per-camera 2D mesh vertices are saved as `hamer_vertices_2d_
 |---|---|
 | `main(gui_options_json)` | Entry point for Phase 2. Triangulates, smooths, reprojects, and renders all trials. |
 
+### `athena.calibration_refine`
+
+| Function | Description |
+|---|---|
+| `refine_calibration(extrinsics, intrinsics, data_2d, ...)` | Sliding-window bundle adjustment to refine camera extrinsics. Returns refined extrinsics and a per-window drift report. |
+| `save_refined_calibration(extrinsics, intrinsics, dist_coeffs, output_path, ...)` | Write refined calibration to TOML or YAML (saved to `calibration/refined/`, never overwrites originals). |
+
 ### `athena.visualization`
 
 | Function / Constant | Description |
@@ -307,6 +319,9 @@ A: Yes, for 2D landmark extraction only. Triangulation to 3D requires synchroniz
 
 **Q: How do I obtain calibration files?**
 A: Use a camera calibration tool such as [JARVIS](https://jarvis-mocap.github.io/jarvis-docs/) or [Anipose](https://anipose.readthedocs.io/). ATHENA accepts YAML (JARVIS) and TOML (Anipose) formats directly.
+
+**Q: My calibration seems off or cameras shifted during recording. What can I do?**
+A: Enable "Refine Calibration" in the Triangulation & Refinement settings. This runs a bundle adjustment that optimizes camera extrinsics using confident hand landmark detections. It processes the recording in temporal windows and reports any detected camera drift. Refined calibrations are saved to `calibration/refined/` without overwriting your originals.
 
 **Q: Processing is slow -- how can I speed it up?**
 A: Increase the number of parallel processes (up to the number of cameras). Use the fraction-of-frames slider to subsample. HaMeR is slower than MediaPipe hands but produces higher-quality meshes.

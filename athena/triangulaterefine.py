@@ -5,9 +5,11 @@ Pipeline (executed by ``main``):
     1. Load per-camera 2D landmarks (body, hands, optionally face).
     2. Correct left/right hand swaps across cameras (``_switch_hands``).
     3. Undistort 2D points using camera intrinsics.
-    4. Triangulate to 3D via DLT with iterative reprojection-error camera
+    4. Optionally refine camera extrinsics via bundle adjustment
+       (``calibration_refine.refine_calibration``).
+    5. Triangulate to 3D via DLT with iterative reprojection-error camera
        filtering (``_triangulate_with_filtering``).
-    5. Temporal smoothing with a Savitzky-Golay low-pass filter (``_smooth3d``).
+    6. Temporal smoothing with a Savitzky-Golay low-pass filter (``_smooth3d``).
     6. Reproject smoothed 3D landmarks back to each camera and save.
     7. Optionally triangulate HaMeR hand-mesh vertices.
     8. Generate visualisation images/videos (2D overlays and 3D skeleton).
@@ -1026,6 +1028,35 @@ def main(gui_options_json):
                 mesh_v2d_right = np.stack(v2d_r_list)  # (ncams, nframes, 778, 2)
                 has_mesh_data = True
                 print(f'  Loaded vertex 2D data: {mesh_v2d_left.shape}')
+
+        # Optional: refine camera calibration via bundle adjustment
+        if gui_options.get('refine_calibration', False):
+            from .calibration_refine import refine_calibration as _refine_cal
+            # Use combined 2D data (body+hands+face) in pixel space
+            data_2d_for_refine = data_2d_combined.copy()
+            refined_extrinsics, drift_report = _refine_cal(
+                cam_mats_extrinsic, cam_mats_intrinsic,
+                data_2d_for_refine, nframes, nlandmarks,
+                verbose=True,
+            )
+            cam_mats_extrinsic = refined_extrinsics
+
+            # Save refined calibration in a subdirectory so the original
+            # calibration glob is not polluted on the next run.
+            from .calibration_refine import save_refined_calibration
+            refined_dir = os.path.join(main_folder, 'calibration', 'refined')
+            os.makedirs(refined_dir, exist_ok=True)
+            if calfileext == '*.toml':
+                save_refined_calibration(
+                    cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs,
+                    os.path.join(refined_dir, 'calibration_refined.toml'), fmt='toml',
+                    metadata={'trial': trialname},
+                )
+            else:
+                save_refined_calibration(
+                    cam_mats_extrinsic, cam_mats_intrinsic, cam_dist_coeffs,
+                    os.path.join(refined_dir, 'calibration_refined.yaml'), fmt='yaml',
+                )
 
         # Switch hands (also swaps vertex 2D data if provided)
         data_2d = _switch_hands(

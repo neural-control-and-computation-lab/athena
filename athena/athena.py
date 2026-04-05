@@ -143,6 +143,7 @@ def select_folder_and_options(root):
         gui_options['all_landmarks_lfc'] = slider_all_lfc.get()
         gui_options['hand_backend'] = var_hand_backend.get()
         gui_options['use_face_mesh'] = var_use_face_mesh.get()
+        gui_options['refine_calibration'] = var_refine_calibration.get()
 
         if not gui_options['idfolders']:
             messagebox.showerror("Error", "No recordings selected!")
@@ -271,6 +272,7 @@ def select_folder_and_options(root):
     var_save_video_refine = tk.BooleanVar(value=False)
     var_hand_backend = tk.StringVar(value='mediapipe')   # 'mediapipe' or 'hamer'
     var_use_face_mesh = tk.BooleanVar(value=False)
+    var_refine_calibration = tk.BooleanVar(value=False)
 
     # Trace changes to 'Save Video' and 'Save Images' variables
     var_save_video_mp.trace_add('write', update_save_images_mp)
@@ -391,29 +393,36 @@ def select_folder_and_options(root):
     frame_triangulation.columnconfigure(0, weight=1)
     frame_triangulation.columnconfigure(1, weight=1)
 
+    # Checkbox for calibration refinement
+    chk_refine_calibration = tk.Checkbutton(
+        frame_triangulation, text="Refine Calibration",
+        variable=var_refine_calibration
+    )
+    chk_refine_calibration.grid(row=1, column=0, padx=5, pady=5, sticky="w")
+
     # All landmark low-frequency cutoff
     slider_all_lfc = tk.Scale(
         frame_triangulation, from_=1, to=50, resolution=1, orient=tk.HORIZONTAL,
         label="All points: low-freq cutoff (Hz)"
     )
-    slider_all_lfc.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+    slider_all_lfc.grid(row=2, column=0, padx=5, pady=5, sticky="ew")
     slider_all_lfc.set(10)
 
     # Checkboxes for saving images and videos during triangulation
     chk_save_images_triangulation = tk.Checkbutton(
         frame_triangulation, text="Save 3D Images", variable=var_save_images_triangulation
     )
-    chk_save_images_triangulation.grid(row=2, column=0, padx=5, pady=5, sticky="w")
+    chk_save_images_triangulation.grid(row=3, column=0, padx=5, pady=5, sticky="w")
     chk_save_video_triangulation = tk.Checkbutton(
         frame_triangulation, text="Save 3D Video", variable=var_save_video_triangulation
     )
-    chk_save_video_triangulation.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+    chk_save_video_triangulation.grid(row=3, column=1, padx=5, pady=5, sticky="w")
 
     # Checkboxes for saving images and videos during refinement
     chk_save_images_refine = tk.Checkbutton(frame_triangulation, text="Save Refined 2D Images", variable=var_save_images_refine)
-    chk_save_images_refine.grid(row=3, column=0, padx=5, pady=5, sticky="w")
+    chk_save_images_refine.grid(row=4, column=0, padx=5, pady=5, sticky="w")
     chk_save_video_refine = tk.Checkbutton(frame_triangulation, text="Save Refined 2D Video", variable=var_save_video_refine)
-    chk_save_video_refine.grid(row=3, column=1, padx=5, pady=5, sticky="w")
+    chk_save_video_refine.grid(row=4, column=1, padx=5, pady=5, sticky="w")
 
     # Button to start processing
     btn_submit = tk.Button(root, text="GO", command=on_submit)
