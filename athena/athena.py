@@ -255,7 +255,7 @@ def select_folder_and_options(root):
     gui_options = {}  # Dictionary to hold GUI options
 
     # Set window size and center it on the screen
-    window_width, window_height = 600, 800
+    window_width, window_height = 600, 850
     screen_width, screen_height = root.winfo_screenwidth(), root.winfo_screenheight()
     position_x, position_y = (screen_width - window_width) // 2, (screen_height - window_height) // 2
     root.geometry(f'{window_width}x{window_height}+{position_x}+{position_y}')
@@ -430,7 +430,7 @@ def select_folder_and_options(root):
 
     # Button to quit the application
     btn_quit = tk.Button(root, text="QUIT", command=quit_application)
-    btn_quit.pack(pady=5)
+    btn_quit.pack(pady=10)
 
 def main():
     # Create the root window
