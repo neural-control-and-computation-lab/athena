@@ -1,4 +1,11 @@
 import os
+
+# Suppress noisy C++ log messages from MediaPipe, TensorFlow Lite, and absl
+# before any of those libraries are imported.
+os.environ.setdefault('GLOG_minloglevel', '2')
+os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '3')
+os.environ.setdefault('ABSL_MIN_LOG_LEVEL', '2')
+
 import glob
 import json
 import time
@@ -1191,9 +1198,7 @@ def process_camera(cam, input_stream, gui_options, cam_mats_intrinsic, cam_dist_
     # Save face landmarks (optional)
     if use_face_mesh and kpts_face:
         kpts_face_arr = np.array(kpts_face)  # (nframes, 478, 5)
-        n_detected = np.sum(kpts_face_arr[:, 0, 0] != -1)
         np.save(os.path.join(data_save_path, '2Dlandmarks_face.npy'), kpts_face_arr)
-        print(f'  Cam {cam}: Face landmarks saved ({n_detected}/{len(kpts_face_arr)} frames detected)')
 
     # Release resources
     hand_landmarker.close()
@@ -1788,9 +1793,7 @@ def process_camera_hybrid(cam, input_stream, gui_options, cam_mats_intrinsic, ca
     # Save face landmarks (optional)
     if use_face_mesh and kpts_face:
         kpts_face_arr = np.array(kpts_face)  # (nframes, 478, 5)
-        n_detected = np.sum(kpts_face_arr[:, 0, 0] != -1)
         np.save(os.path.join(data_save_path, '2Dlandmarks_face.npy'), kpts_face_arr)
-        print(f'  Cam {cam}: Face landmarks saved ({n_detected}/{len(kpts_face_arr)} frames detected)')
 
     # Save MANO face topology once at the trial level (shared across all cameras)
     from athena.hamer_hands import get_mano_faces
@@ -1929,7 +1932,7 @@ def run_hybrid(input_streams, gui_options, cam_mats_intrinsic, cam_dist_coeffs, 
 
 def main(gui_options_json):
     # Set the multiprocessing start method to 'spawn'
-    set_start_method('spawn')
+    set_start_method('spawn', force=True)
 
     gui_options = json.loads(gui_options_json)
 

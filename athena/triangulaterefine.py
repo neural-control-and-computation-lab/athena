@@ -313,6 +313,76 @@ def _restore_long_nan_runs(original_data, filtered_data, min_length=5):
     return filtered_data
 
 
+def _anchor_face_to_head(data3d, kernel_size=31):
+    """Stabilise face mesh translation by anchoring to body head landmarks.
+
+    Parameters
+    ----------
+    data3d : ndarray, shape (nframes, nlandmarks, 3)
+        Triangulated 3D landmarks.  Body head = indices 0-10,
+        face mesh = indices 75 onwards.
+    kernel_size : int
+        Rolling-median window (in frames) used to smooth the offset between
+        the face mesh centroid and body head centroid.  Must be odd.
+
+    Returns
+    -------
+    data3d : ndarray, same shape, with face mesh landmarks repositioned.
+    """
+    _HEAD = slice(0, 11)       # body head landmarks (nose, eyes, ears, mouth)
+    _FACE = slice(75, None)    # face mesh landmarks
+
+    nframes = data3d.shape[0]
+    head = data3d[:, _HEAD, :]   # (nframes, 11, 3)
+    face = data3d[:, _FACE, :]   # (nframes, 478, 3)
+
+    # Per-frame centroids (NaN-aware)
+    head_centroid = np.nanmean(head, axis=1)  # (nframes, 3)
+    face_centroid = np.nanmean(face, axis=1)  # (nframes, 3)
+
+    # Offset from head centroid to face centroid
+    offset = face_centroid - head_centroid     # (nframes, 3)
+
+    # Frames where both centroids are valid
+    valid = ~(np.isnan(head_centroid[:, 0]) | np.isnan(face_centroid[:, 0]))
+
+    if valid.sum() < 2:
+        return data3d
+
+    # Smooth the offset with a rolling median to remove frame-to-frame jumps
+    # while preserving slow genuine drift (e.g. head tilt).
+    from scipy.ndimage import median_filter
+    ks = min(kernel_size, int(valid.sum()))
+    if ks % 2 == 0:
+        ks += 1
+    smooth_offset = np.copy(offset)
+    for ax in range(3):
+        col = offset[:, ax].copy()
+        # Interpolate over NaN gaps before filtering
+        nans = np.isnan(col)
+        if nans.all():
+            continue
+        col[nans] = np.interp(np.where(nans)[0],
+                               np.where(~nans)[0], col[~nans])
+        col = median_filter(col, size=ks, mode='nearest')
+        smooth_offset[:, ax] = col
+
+    # Desired face centroid = head centroid + smoothed offset
+    desired_centroid = head_centroid + smooth_offset  # (nframes, 3)
+
+    # Shift face mesh landmarks per frame
+    shift = desired_centroid - face_centroid  # (nframes, 3)
+    for f in range(nframes):
+        if np.isnan(shift[f, 0]):
+            continue
+        data3d[f, _FACE, :] += shift[f, :]
+
+    n_anchored = valid.sum()
+    print(f'  Face mesh anchored to body head ({n_anchored}/{nframes} frames)')
+
+    return data3d
+
+
 def _smooth3d(data3d, fps, frequency_cutoff=20, polyorder=3):
     """
     Apply Savitzky-Golay temporal smoothing to every landmark independently.
@@ -1109,6 +1179,14 @@ def main(gui_options_json):
         if nlandmarks > 75:
             valid_face = ~np.isnan(data3d[:, 75:, 0])
             print(f'  Face landmarks: {np.sum(valid_face)}/{valid_face.size} valid 3D points')
+
+            # Anchor face mesh translation to body head landmarks.
+            # The face mesh (478 points) can jump in absolute position due to
+            # per-landmark triangulation noise.  Body head landmarks (0-10)
+            # are more stable since they come from the full-body pose model.
+            # We lock the face centroid to body_head_centroid + smoothed_offset
+            # so the face shape is preserved but translation is stabilised.
+            data3d = _anchor_face_to_head(data3d)
 
         # Get FPS from video
         vidnames = sorted(glob.glob(os.path.join(main_folder, 'videos', trialname, '*.avi')) + glob.glob(os.path.join(main_folder, 'videos', trialname, '*.mp4')))

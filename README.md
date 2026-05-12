@@ -18,7 +18,7 @@ Check out our [paper](https://doi.org/10.1152/jn.00407.2025) published in the *J
 - **HaMeR hand-mesh regression** (optional) -- high-quality MANO mesh recovery (778 vertices per hand) as an alternative to MediaPipe hands, using MediaPipe bounding boxes fed into [HaMeR](https://github.com/geopavlakos/hamer).
 - **Cross-camera hand reassignment** -- after independent per-camera detection, body wrists are triangulated to 3D and reprojected into every camera to reassign hand labels, fixing left/right misassignments.
 - **Spatially inconsistent hand rejection** -- hand detections whose wrist root deviates more than a threshold (default 60 px) from the reprojected 3D body wrist are rejected, preventing noisy detections from corrupting triangulation.
-- **Face mesh tracking** -- optional 478-landmark face mesh via MediaPipe FaceLandmarker, triangulated and smoothed alongside body and hand data.
+- **Face mesh tracking** -- optional 478-landmark face mesh via MediaPipe FaceLandmarker, triangulated and smoothed alongside body and hand data. Face mesh translation is anchored to body head landmarks for frame-to-frame stability.
 - **Dynamic calibration refinement** -- optional sliding-window bundle adjustment refines camera extrinsics using reprojection error from confident hand landmark detections. Uses a robust (soft L1) loss to resist outlier detections while tracking genuine camera movement. Includes drift detection to flag cameras that may have physically shifted during a recording.
 - **DLT triangulation with outlier filtering** -- iterative reprojection-error camera filtering (30 px threshold) removes outlier cameras per landmark per frame.
 - **Temporal smoothing** -- Savitzky-Golay low-pass filter with configurable frequency cutoff.
